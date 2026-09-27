@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { api } from '../lib/api'
+
+const BADGE: Record<string, string> = { done: 'done', failed: 'failed', running: 'running', pending: 'pending', planning: 'planning' }
+const BADGE_TEXT: Record<string, string> = { done: '完成', failed: '失败', running: '执行中', pending: '待执行', planning: '规划中' }
+const SYSTEM_TEXT: Record<string, string> = {
+  pending: '任务已创建，等待执行', planning: '正在规划执行步骤', running: '正在执行任务',
+  done: '任务执行完成', failed: '任务执行失败'
+}
 
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>()
@@ -10,40 +17,57 @@ export default function TaskDetail() {
   async function load() {
     try {
       const r = await api.getTask(id!)
-      setTask(r.task)
-      setErr('')
+      setTask(r.task); setErr('')
     } catch (e: any) { setErr(e.message) }
   }
-
   async function run() { await api.runTask(id!); await load() }
 
   useEffect(() => {
     load()
     const t = setInterval(() => {
-      if (task && (task.status === 'running' || task.status === 'pending')) load()
+      if (task && ['running', 'pending', 'planning'].includes(task.status)) load()
     }, 2000)
     return () => clearInterval(t)
   }, [id, task?.status])
 
   if (err) return <p style={{ color: 'var(--err)' }}>{err}</p>
-  if (!task) return <p className="muted">加载中…</p>
+  if (!task) return <div className="thinking"><i /><i /><i /></div>
+
+  const running = ['running', 'pending', 'planning'].includes(task.status)
 
   return (
     <div>
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <h1>{task.title}</h1>
+      <div className="page-head">
         <div className="row">
-          <span className="badge">{task.status}</span>
-          <button className="btn" onClick={run}>执行</button>
+          <Link to="/tasks" className="btn ghost sm">← 返回</Link>
+          <h1>{task.title}</h1>
+          <span className={`badge ${BADGE[task.status] || 'pending'}`}><i className="dot" />{BADGE_TEXT[task.status] || task.status}</span>
         </div>
+        <button className="btn" onClick={run} disabled={running}>{running ? '执行中…' : '✦ 重新执行'}</button>
       </div>
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>任务内容</h3>
-        <pre className="log">{task.input}</pre>
-      </div>
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>执行结果</h3>
-        <pre className="log">{task.result || '（暂无结果）'}</pre>
+
+      <div className="card" style={{ padding: 26 }}>
+        <div className="chat">
+          <div className="msg system"><div className="bubble">{SYSTEM_TEXT[task.status] || task.status}</div></div>
+
+          <div className="msg user">
+            <span className="avatar">你</span>
+            <div className="bubble">{task.input}</div>
+          </div>
+
+          <div className="msg assistant">
+            <span className="avatar">✦</span>
+            <div className="bubble">
+              {running && !task.result ? (
+                <span className="thinking"><i /><i /><i /> Agent 正在工作…</span>
+              ) : task.result ? (
+                task.result
+              ) : (
+                <span className="muted">点击右上角「重新执行」开始任务</span>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
