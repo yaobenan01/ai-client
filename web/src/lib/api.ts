@@ -1,4 +1,5 @@
-const BASE = ''
+// 开发环境（vite dev）通过代理转发到 core；打包后（桌面/PWA）直连 127.0.0.1:8787。
+const BASE = import.meta.env.PROD ? 'http://127.0.0.1:8787' : ''
 
 function token(): string | null {
   return localStorage.getItem('ai-client-token')
@@ -13,7 +14,12 @@ async function request<T = any>(path: string, opts: RequestInit = {}): Promise<T
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as any) }
   const t = token()
   if (t) headers.Authorization = `Bearer ${t}`
-  const res = await fetch(BASE + path, { ...opts, headers })
+  let res: Response
+  try {
+    res = await fetch(BASE + path, { ...opts, headers })
+  } catch {
+    throw new Error('无法连接核心服务，请确认 ai-client 核心已在 127.0.0.1:8787 启动')
+  }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`)
   return data as T
@@ -39,4 +45,3 @@ export const api = {
   installPlugin: (path: string) => request('/api/plugins/install', { method: 'POST', body: JSON.stringify({ path }) }),
   systemInfo: () => request('/api/system/info')
 }
-
