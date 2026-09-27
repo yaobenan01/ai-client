@@ -28,7 +28,7 @@ pub struct WorkflowStep {
 
 pub struct WorkflowEngine {
     provider: Arc<dyn ModelProvider>,
-    tools: ToolRegistry,
+    tools: Arc<ToolRegistry>,
 }
 
 impl WorkflowEngine {
@@ -79,4 +79,5 @@ fn render(template: &str, vars: &HashMap<String, String>) -> String {
     }
     out
 }
+
 

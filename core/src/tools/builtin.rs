@@ -112,7 +112,8 @@ impl Tool for ListDir {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            out.push_str(if is_dir { &format!("[dir]  {name}\n") } else { &format!("[file] {name}\n") });
+            let line = if is_dir { format!("[dir]  {name}\n") } else { format!("[file] {name}\n") };
+            out.push_str(&line);
         }
         Ok(ToolOutput::ok(out))
     }
@@ -157,3 +158,4 @@ impl Tool for RunCommand {
         }
     }
 }
+

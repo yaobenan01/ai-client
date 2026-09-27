@@ -1,9 +1,10 @@
 use crate::error::{AppError, Result};
 use crate::storage::Db;
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use rand_core::OsRng;
 use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -177,3 +178,4 @@ mod tests {
         assert!(auth.verify_session(&session.token).is_err(), "登出后会话应失效");
     }
 }
+

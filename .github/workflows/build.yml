@@ -61,7 +61,7 @@ jobs:
       - name: Install
         run: pnpm install --dir web
       - name: Typecheck
-        run: pnpm --dir web exec tsc --noEmit -p web/tsconfig.app.json
+        run: pnpm --dir web exec tsc --noEmit -p tsconfig.app.json
       - name: Build
         run: pnpm --dir web run build
       - name: Upload dist
@@ -122,3 +122,4 @@ jobs:
         with:
           name: ai-client-desktop-${{ matrix.target }}
           path: desktop/src-tauri/target/release/bundle/
+

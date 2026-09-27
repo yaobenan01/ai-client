@@ -71,14 +71,16 @@ impl LlamaServerManager {
 
     fn existing_url(&self, key: &str) -> Option<String> {
         let mut running = self.running.lock().unwrap();
-        let entry = running.get_mut(key)?;
-        // If the child has exited, remove it so we can restart.
-        if let Some(status) = entry.child.try_wait().ok().flatten() {
-            let _ = status;
+        let exited = match running.get_mut(key) {
+            Some(entry) => entry.child.try_wait().ok().flatten().is_some(),
+            None => return None,
+        };
+        if exited {
+            // The previous server exited; drop it so the caller restarts.
             running.remove(key);
             return None;
         }
-        Some(entry.base_url.clone())
+        running.get(key).map(|s| s.base_url.clone())
     }
 
     /// Stop all managed servers (called on shutdown).
@@ -107,3 +109,4 @@ async fn wait_ready(base_url: &str) -> Result<()> {
     }
     Err(AppError::Model(format!("llama-server 未在预期时间内就绪: {health}")))
 }
+
