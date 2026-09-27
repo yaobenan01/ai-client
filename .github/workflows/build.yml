@@ -120,10 +120,11 @@ jobs:
         shell: bash
         run: |
           mkdir -p desktop/src-tauri/binaries
-          if [ -f "core/target/${{ matrix.target }}/release/ai-client.exe" ]; then
-            cp "core/target/${{ matrix.target }}/release/ai-client.exe" desktop/src-tauri/binaries/ai-client.exe
+          TRIPLE="${{ matrix.target }}"
+          if [ -f "core/target/$TRIPLE/release/ai-client.exe" ]; then
+            cp "core/target/$TRIPLE/release/ai-client.exe" "desktop/src-tauri/binaries/ai-client-$TRIPLE.exe"
           else
-            cp "core/target/${{ matrix.target }}/release/ai-client" desktop/src-tauri/binaries/ai-client
+            cp "core/target/$TRIPLE/release/ai-client" "desktop/src-tauri/binaries/ai-client-$TRIPLE"
           fi
       - name: Install desktop deps
         run: pnpm --dir desktop install
@@ -138,4 +139,5 @@ jobs:
         with:
           name: ai-client-desktop-${{ matrix.target }}
           path: desktop/src-tauri/target/release/bundle/
+
 
