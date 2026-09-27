@@ -27,12 +27,13 @@
     "active": true,
     "targets": "all",
     "resources": [
-      "../plugins/ppt-master/**/*",
-      "../sidecars/**/*"
+      "../../plugins/ppt-master/**/*",
+      "../../sidecars/**/*"
     ],
     "externalBin": [
       "binaries/ai-client"
     ]
   }
 }
+
 
