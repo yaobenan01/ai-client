@@ -11,31 +11,39 @@ env:
 
 jobs:
   build-core:
-    name: core (${{ matrix.os }})
+    name: core (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            test: true
           - os: macos-14
             target: aarch64-apple-darwin
-          - os: macos-13
+            test: true
+          - os: macos-14
             target: x86_64-apple-darwin
+            test: false
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            test: true
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            test: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
       - name: Build core
         run: cargo build --release --manifest-path core/Cargo.toml --target ${{ matrix.target }}
       - name: Test core
+        if: matrix.test
         run: cargo test --manifest-path core/Cargo.toml --target ${{ matrix.target }} --lib
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -71,7 +79,7 @@ jobs:
           path: web/dist
 
   build-desktop:
-    name: desktop (${{ matrix.os }})
+    name: desktop (${{ matrix.target }})
     needs: [build-core]
     strategy:
       fail-fast: false
@@ -122,4 +130,3 @@ jobs:
         with:
           name: ai-client-desktop-${{ matrix.target }}
           path: desktop/src-tauri/target/release/bundle/
-
