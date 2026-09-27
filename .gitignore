@@ -1,0 +1,28 @@
+# Rust
+core/target/
+desktop/src-tauri/target/
+**/*.rs.bk
+
+# Node / web
+node_modules/
+web/dist/
+desktop/dist/
+*.tsbuildinfo
+
+# Python / sidecars
+__pycache__/
+*.pyc
+.venv/
+sidecars/python/runtime/
+sidecars/tts/models/
+sidecars/media/bin/
+
+# ppt-master checkout
+plugins/ppt-master/src/
+plugins/ppt-master/.venv/
+
+# artifacts
+installers/
+*.log
+.DS_Store
+.env

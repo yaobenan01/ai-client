@@ -1,0 +1,9 @@
+{
+  "id": "ppt-master",
+  "name": "ppt-master",
+  "version": "0.1.0",
+  "entry": "run.py",
+  "video_entry": "render_video.py",
+  "runtime": "python",
+  "offline": true
+}

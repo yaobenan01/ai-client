@@ -1,0 +1,15 @@
+{
+  "name": "离线 AI 智能体客户端",
+  "short_name": "AI 客户端",
+  "description": "全离线 AI 智能体：本地登录、本地模型、任务执行、可编辑 PPT 与口播视频",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,12 @@
+services:
+  ai-client:
+    build: .
+    container_name: ai-client-headless
+    ports:
+      - "8787:8787"
+    volumes:
+      - ai-client-data:/data
+    restart: unless-stopped
+
+volumes:
+  ai-client-data:
