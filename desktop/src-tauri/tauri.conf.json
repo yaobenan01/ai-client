@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.local.aiclient",
   "build": {
-    "beforeDevCommand": "npm run dev --prefix ../web",
+    "beforeDevCommand": "pnpm --dir ../web run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build --prefix ../web",
+    "beforeBuildCommand": "pnpm --dir ../web run build",
     "frontendDist": "../web/dist"
   },
   "app": {
@@ -26,9 +26,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": [
-      "icons/icon.png"
-    ],
     "resources": [
       "../plugins/ppt-master/**/*",
       "../sidecars/**/*"

@@ -120,11 +120,17 @@ jobs:
         shell: bash
         run: |
           mkdir -p desktop/src-tauri/binaries
-          cp core/target/${{ matrix.target }}/release/ai-client* desktop/src-tauri/binaries/ai-client
-      - name: Install web deps
-        run: pnpm install --dir web
+          if [ -f "core/target/${{ matrix.target }}/release/ai-client.exe" ]; then
+            cp "core/target/${{ matrix.target }}/release/ai-client.exe" desktop/src-tauri/binaries/ai-client.exe
+          else
+            cp "core/target/${{ matrix.target }}/release/ai-client" desktop/src-tauri/binaries/ai-client
+          fi
+      - name: Install desktop deps
+        run: pnpm --dir desktop install
+      - name: Generate icons
+        run: pnpm --dir desktop tauri icon src-tauri/icons/icon.png
       - name: Tauri build
-        run: pnpm --dir desktop install && pnpm --dir desktop tauri build
+        run: pnpm --dir desktop tauri build
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:

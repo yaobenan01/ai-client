@@ -46,7 +46,7 @@ impl LlamaServerManager {
         }
 
         let port = self.next_port.fetch_add(1, Ordering::SeqCst);
-        let mut child = tokio::process::Command::new(&self.server_bin)
+        let child = tokio::process::Command::new(&self.server_bin)
             .arg("-m")
             .arg(model_path)
             .arg("--host")
@@ -109,4 +109,5 @@ async fn wait_ready(base_url: &str) -> Result<()> {
     }
     Err(AppError::Model(format!("llama-server 未在预期时间内就绪: {health}")))
 }
+
 
