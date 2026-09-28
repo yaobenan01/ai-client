@@ -49,12 +49,34 @@ pub struct Task {
     pub status: String,
     pub progress: i64,
     pub result: Option<String>,
+    pub logs: Option<String>,
+    pub artifacts: Option<String>,
+    pub model_id: Option<String>,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
 }
 
 impl Task {
     pub fn status(&self) -> TaskStatus {
         TaskStatus::from_str(&self.status)
     }
+}
+
+/// A structured step in an agent run for observability and timeline visualization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStep {
+    pub step: usize,
+    pub action: String, // "thought", "tool_call", "tool_result", "finish", "error"
+    pub tool_name: Option<String>,
+    pub input: Option<String>,
+    pub output: Option<String>,
+    pub timestamp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunOutput {
+    pub final_answer: String,
+    pub steps: Vec<TaskStep>,
 }
 
 #[derive(Debug, Clone)]
@@ -94,6 +116,20 @@ impl Agent {
 
     /// Run a task to completion and return the final answer.
     pub async fn run(&self, ctx: &ToolContext, task_input: &str) -> Result<String> {
+        let output = self.run_with_reporter(ctx, task_input, |_, _| {}).await?;
+        Ok(output.final_answer)
+    }
+
+    /// Run a task while streaming each step to a reporter callback.
+    pub async fn run_with_reporter<F>(
+        &self,
+        ctx: &ToolContext,
+        task_input: &str,
+        mut reporter: F,
+    ) -> Result<AgentRunOutput>
+    where
+        F: FnMut(usize, &TaskStep) + Send,
+    {
         let mut messages: Vec<ChatMessage> = vec![
             ChatMessage { role: "system".into(), content: self.config.system_prompt.clone() },
             ChatMessage { role: "user".into(), content: task_input.to_string() },
@@ -101,18 +137,47 @@ impl Agent {
 
         let specs = self.tools.specs();
         let mut final_answer = String::new();
+        let mut steps = Vec::new();
 
-        for _step in 0..self.config.max_iterations {
-            let resp = self.provider.chat(&messages, &specs, self.config.max_tokens).await?;
+        for step in 0..self.config.max_iterations {
+            // Context Management: trim history to respect sliding window token budget
+            let trimmed_messages = crate::context::trim_history(messages.clone(), 16);
+
+            let resp = self.provider.chat(&trimmed_messages, &specs, self.config.max_tokens).await?;
             final_answer = resp.content.clone();
 
-            // No tool calls => the model produced its final answer.
-            if resp.tool_calls.is_empty() || resp.finish_reason == "stop" {
+            // Record thought if content is non-empty
+            if !resp.content.trim().is_empty() {
+                let thought_step = TaskStep {
+                    step: step + 1,
+                    action: "thought".into(),
+                    tool_name: None,
+                    input: None,
+                    output: Some(resp.content.clone()),
+                    timestamp: chrono::Utc::now().timestamp(),
+                };
+                steps.push(thought_step.clone());
+                reporter(step + 1, &thought_step);
+            }
+
+            // CRITICAL FIX: Only treat as final answer if NO tool calls were returned.
+            // Some models return finish_reason="stop" even with tool_calls.
+            if resp.tool_calls.is_empty() {
                 messages.push(ChatMessage { role: "assistant".into(), content: resp.content.clone() });
+                let finish_step = TaskStep {
+                    step: step + 1,
+                    action: "finish".into(),
+                    tool_name: None,
+                    input: None,
+                    output: Some(resp.content.clone()),
+                    timestamp: chrono::Utc::now().timestamp(),
+                };
+                steps.push(finish_step.clone());
+                reporter(step + 1, &finish_step);
                 break;
             }
 
-            // Record the assistant turn, then execute each requested tool.
+            // Record the assistant turn with tool calls, then execute each requested tool.
             let mut assistant_turn = resp.content.clone();
             for call in &resp.tool_calls {
                 assistant_turn.push_str(&format!("\n[tool] {} {}\n", call.name, call.arguments));
@@ -120,15 +185,36 @@ impl Agent {
             messages.push(ChatMessage { role: "assistant".into(), content: assistant_turn });
 
             for call in &resp.tool_calls {
+                let call_step = TaskStep {
+                    step: step + 1,
+                    action: "tool_call".into(),
+                    tool_name: Some(call.name.clone()),
+                    input: Some(call.arguments.to_string()),
+                    output: None,
+                    timestamp: chrono::Utc::now().timestamp(),
+                };
+                steps.push(call_step.clone());
+                reporter(step + 1, &call_step);
+
                 let output = self.dispatch(&call.name, call.arguments.clone(), ctx).await;
-                let obs = format_tool_observation(&call.name, output);
-                // TODO(tool-protocol): emit role "tool" + tool_call_id for strict
-                // OpenAI compatibility once ChatMessage carries call ids.
+                let obs = format_tool_observation(&call.name, output.clone());
+
+                let result_step = TaskStep {
+                    step: step + 1,
+                    action: if output.error.is_some() { "error".into() } else { "tool_result".into() },
+                    tool_name: Some(call.name.clone()),
+                    input: None,
+                    output: Some(obs.clone()),
+                    timestamp: chrono::Utc::now().timestamp(),
+                };
+                steps.push(result_step.clone());
+                reporter(step + 1, &result_step);
+
                 messages.push(ChatMessage { role: "tool".into(), content: obs });
             }
         }
 
-        Ok(final_answer)
+        Ok(AgentRunOutput { final_answer, steps })
     }
 
     async fn dispatch(&self, name: &str, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {

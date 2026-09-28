@@ -46,13 +46,14 @@ impl Core {
         let models = Arc::new(ModelRegistry::new());
         load_model_profiles(&db, &models)?;
 
-        let tools = Arc::new(default_registry());
-        let plugins = PluginManager::new(config.plugins_dir.clone());
         let ppt = PptRuntime::detect(PptRuntimeConfig {
             ppt_master_dir: Some(config.plugins_dir.join("ppt-master")),
             tts_engine: "cosyvoice".into(),
             ..Default::default()
         })?;
+        let ppt_arc = Arc::new(ppt.clone());
+        let tools = Arc::new(crate::tools::default_registry_with_ppt(ppt_arc));
+        let plugins = PluginManager::new(config.plugins_dir.clone());
 
         let llama_bin = config
             .llama_server_bin
@@ -187,6 +188,37 @@ impl Core {
         })
     }
 
+    // ---- model diagnostic ----
+    pub async fn test_model(&self, id: &str, prompt: Option<&str>) -> Result<serde_json::Value> {
+        let profile = self
+            .models
+            .resolve(Some(id))
+            .ok_or_else(|| crate::error::AppError::NotFound(format!("模型不存在: {id}")))?;
+        let provider = self.resolve_provider(&profile).await?;
+        let start = std::time::Instant::now();
+        let prompt_text = prompt.unwrap_or("你好！请简短回答并确认连通成功。");
+        let resp = provider
+            .chat(
+                &[crate::models::ChatMessage {
+                    role: "user".into(),
+                    content: prompt_text.to_string(),
+                }],
+                &[],
+                128,
+            )
+            .await?;
+        let latency_ms = start.elapsed().as_millis();
+        Ok(serde_json::json!({
+            "ok": true,
+            "id": profile.id,
+            "name": profile.name,
+            "kind": profile.kind,
+            "latency_ms": latency_ms,
+            "response": resp.content,
+            "finish_reason": resp.finish_reason
+        }))
+    }
+
     // ---- tasks ----
     pub fn create_task(&self, user_id: &str, title: &str, input: &str, model_id: Option<&str>) -> Result<Task> {
         let id = Uuid::new_v4().to_string();
@@ -198,11 +230,28 @@ impl Core {
             status: TaskStatus::Pending.as_str().to_string(),
             progress: 0,
             result: None,
+            logs: Some("[]".into()),
+            artifacts: Some("[]".into()),
+            model_id: model_id.map(|s| s.to_string()),
+            created_at: Some(now),
+            updated_at: Some(now),
         };
         self.db.conn().execute(
-            "INSERT INTO tasks (id, user_id, title, input, status, progress, model_id, result, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
-            params![id, user_id, title, input, task.status, task.progress, model_id, None::<String>, now],
+            "INSERT INTO tasks (id, user_id, title, input, status, progress, model_id, result, logs, artifacts, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+            params![
+                id,
+                user_id,
+                title,
+                input,
+                task.status,
+                task.progress,
+                model_id,
+                None::<String>,
+                task.logs,
+                task.artifacts,
+                now
+            ],
         )?;
         Ok(task)
     }
@@ -210,7 +259,8 @@ impl Core {
     pub fn list_tasks(&self, user_id: &str) -> Result<Vec<Task>> {
         let conn = self.db.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, title, input, status, progress, result FROM tasks WHERE user_id = ?1 ORDER BY created_at DESC",
+            "SELECT id, title, input, status, progress, result, logs, artifacts, model_id, created_at, updated_at
+             FROM tasks WHERE user_id = ?1 ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![user_id], |r| {
             Ok(Task {
@@ -220,6 +270,11 @@ impl Core {
                 status: r.get(3)?,
                 progress: r.get(4)?,
                 result: r.get(5)?,
+                logs: r.get(6)?,
+                artifacts: r.get(7)?,
+                model_id: r.get(8)?,
+                created_at: r.get(9)?,
+                updated_at: r.get(10)?,
             })
         })?;
         let mut out = Vec::new();
@@ -233,7 +288,8 @@ impl Core {
         self.db
             .conn()
             .query_row(
-                "SELECT id, title, input, status, progress, result FROM tasks WHERE id = ?1",
+                "SELECT id, title, input, status, progress, result, logs, artifacts, model_id, created_at, updated_at
+                 FROM tasks WHERE id = ?1",
                 params![id],
                 |r| {
                     Ok(Task {
@@ -243,6 +299,11 @@ impl Core {
                         status: r.get(3)?,
                         progress: r.get(4)?,
                         result: r.get(5)?,
+                        logs: r.get(6)?,
+                        artifacts: r.get(7)?,
+                        model_id: r.get(8)?,
+                        created_at: r.get(9)?,
+                        updated_at: r.get(10)?,
                     })
                 },
             )
@@ -250,13 +311,28 @@ impl Core {
             .ok_or_else(|| crate::error::AppError::NotFound(format!("任务不存在: {id}")))
     }
 
-    /// Execute a task using the core agent loop and persist the result.
+    pub fn cancel_task(&self, id: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        self.db.conn().execute(
+            "UPDATE tasks SET status = 'cancelled', result = '任务已由用户手动停止', updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_task(&self, id: &str) -> Result<()> {
+        self.db.conn().execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// Execute a task using the core agent loop with step observability and artifact tracking.
     pub async fn run_task(&self, id: &str) -> Result<Task> {
         let task = self.get_task(id)?;
-        let profile = match self.models.resolve(None) {
+        let model_id_ref = task.model_id.as_deref();
+        let profile = match self.models.resolve(model_id_ref) {
             Some(p) => p,
             None => {
-                self.set_task_status(id, TaskStatus::Failed, "未配置可用模型".into())?;
+                self.update_task_record(id, TaskStatus::Failed, 0, "未配置可用模型", "[]", "[]")?;
                 return Err(crate::error::AppError::Model("未配置可用模型".into()));
             }
         };
@@ -276,26 +352,190 @@ impl Core {
             command_whitelist: vec![],
         };
 
-        self.set_task_status(id, TaskStatus::Running, format!("使用模型 {}", profile.name))?;
-        match agent.run(&ctx, &task.input).await {
-            Ok(answer) => {
-                self.set_task_status(id, TaskStatus::Done, answer)?;
+        let before_files = collect_workspace_artifacts(&self.config.workspace_dir);
+
+        let initial_steps = vec![crate::agent::TaskStep {
+            step: 0,
+            action: "thought".into(),
+            tool_name: None,
+            input: None,
+            output: Some(format!("启动任务，使用模型: {}", profile.name)),
+            timestamp: chrono::Utc::now().timestamp(),
+        }];
+        let logs_str = serde_json::to_string(&initial_steps).unwrap_or_else(|_| "[]".into());
+        self.update_task_record(id, TaskStatus::Running, 10, &format!("使用模型 {}", profile.name), &logs_str, "[]")?;
+
+        let db = self.db.clone();
+        let task_id = id.to_string();
+        let collected_steps = Arc::new(std::sync::Mutex::new(initial_steps));
+        let steps_clone = collected_steps.clone();
+
+        let run_res = agent
+            .run_with_reporter(&ctx, &task.input, move |step_num, step| {
+                let mut guard = steps_clone.lock().unwrap();
+                guard.push(step.clone());
+                let progress = (10 + (step_num * 80 / 24).min(80)) as i64;
+                let logs_json = serde_json::to_string(&*guard).unwrap_or_default();
+                let now = chrono::Utc::now().timestamp();
+                let _ = db.conn().execute(
+                    "UPDATE tasks SET progress = ?1, logs = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![progress, logs_json, now, task_id],
+                );
+            })
+            .await;
+
+        let after_files = collect_workspace_artifacts(&self.config.workspace_dir);
+        let new_artifacts: Vec<String> = after_files
+            .into_iter()
+            .filter(|f| !before_files.contains(f))
+            .collect();
+        let artifacts_json = serde_json::to_string(&new_artifacts).unwrap_or_else(|_| "[]".into());
+
+        let final_steps = collected_steps.lock().unwrap().clone();
+        let final_logs = serde_json::to_string(&final_steps).unwrap_or_else(|_| "[]".into());
+
+        match run_res {
+            Ok(output) => {
+                self.update_task_record(
+                    id,
+                    TaskStatus::Done,
+                    100,
+                    &output.final_answer,
+                    &final_logs,
+                    &artifacts_json,
+                )?;
             }
             Err(e) => {
-                self.set_task_status(id, TaskStatus::Failed, e.to_string())?;
+                self.update_task_record(
+                    id,
+                    TaskStatus::Failed,
+                    100,
+                    &e.to_string(),
+                    &final_logs,
+                    &artifacts_json,
+                )?;
             }
         }
         self.get_task(id)
     }
 
-    fn set_task_status(&self, id: &str, status: TaskStatus, result: String) -> Result<()> {
+    fn update_task_record(
+        &self,
+        id: &str,
+        status: TaskStatus,
+        progress: i64,
+        result: &str,
+        logs: &str,
+        artifacts: &str,
+    ) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         self.db.conn().execute(
-            "UPDATE tasks SET status = ?1, result = ?2, updated_at = ?3 WHERE id = ?4",
-            params![status.as_str(), result, now, id],
+            "UPDATE tasks SET status = ?1, progress = ?2, result = ?3, logs = ?4, artifacts = ?5, updated_at = ?6 WHERE id = ?7",
+            params![status.as_str(), progress, result, logs, artifacts, now, id],
         )?;
         Ok(())
     }
+
+    // ---- direct quick actions & workspace file manager ----
+    pub fn quick_generate_pptx(&self, input_path: Option<&str>, content: Option<&str>) -> Result<PathBuf> {
+        let exports_dir = self.config.workspace_dir.join("exports");
+        std::fs::create_dir_all(&exports_dir)?;
+        let input_file = if let Some(path) = input_path.filter(|s| !s.trim().is_empty()) {
+            let p = PathBuf::from(path);
+            if p.is_absolute() { p } else { self.config.workspace_dir.join(p) }
+        } else if let Some(text) = content.filter(|s| !s.trim().is_empty()) {
+            let temp_name = format!("content_{}.md", chrono::Utc::now().timestamp());
+            let temp_file = exports_dir.join(temp_name);
+            std::fs::write(&temp_file, text)?;
+            temp_file
+        } else {
+            return Err(crate::error::AppError::Config("必须提供材料路径或 Markdown 文本".into()));
+        };
+        self.ppt.generate_pptx(&input_file, &exports_dir)
+    }
+
+    pub fn quick_pptx_to_video(&self, pptx_path: &str, output_path: Option<&str>) -> Result<PathBuf> {
+        let exports_dir = self.config.workspace_dir.join("exports");
+        std::fs::create_dir_all(&exports_dir)?;
+        let p = PathBuf::from(pptx_path);
+        let src = if p.is_absolute() { p } else { self.config.workspace_dir.join(p) };
+        let out = if let Some(o) = output_path.filter(|s| !s.trim().is_empty()) {
+            let op = PathBuf::from(o);
+            if op.is_absolute() { op } else { self.config.workspace_dir.join(op) }
+        } else {
+            let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("presentation");
+            exports_dir.join(format!("{}_{}.mp4", stem, chrono::Utc::now().timestamp()))
+        };
+        self.ppt.pptx_to_video(&src, &out)
+    }
+
+    pub fn list_workspace_files(&self) -> Result<Vec<serde_json::Value>> {
+        let mut files = Vec::new();
+        let base = &self.config.workspace_dir;
+        let mut dirs = vec![base.clone()];
+        let exports = base.join("exports");
+        if exports.exists() {
+            dirs.push(exports);
+        }
+        for dir in dirs {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        let rel = path
+                            .strip_prefix(base)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        let ext = path
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("")
+                            .to_lowercase();
+                        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        let modified = entry
+                            .metadata()
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        files.push(serde_json::json!({
+                            "name": path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+                            "path": rel,
+                            "ext": ext,
+                            "size": size,
+                            "modified": modified
+                        }));
+                    }
+                }
+            }
+        }
+        files.sort_by(|a, b| b["modified"].as_u64().cmp(&a["modified"].as_u64()));
+        Ok(files)
+    }
+}
+
+fn collect_workspace_artifacts(workspace: &Path) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    let exports = workspace.join("exports");
+    let dirs = vec![workspace.to_path_buf(), exports];
+    for dir in dirs {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_file() {
+                    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                    if matches!(ext.as_str(), "pptx" | "mp4" | "pdf" | "png") {
+                        if let Ok(rel) = p.strip_prefix(workspace) {
+                            set.insert(rel.to_string_lossy().replace('\\', "/"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    set
 }
 
 const DEFAULT_SYSTEM_PROMPT: &str = "你是一个离线 AI 智能体。请使用可用工具完成任务，最终用中文给出清晰结论。";

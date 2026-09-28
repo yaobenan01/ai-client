@@ -159,3 +159,91 @@ impl Tool for RunCommand {
     }
 }
 
+pub struct GeneratePptx {
+    pub ppt: std::sync::Arc<crate::ppt::PptRuntime>,
+}
+
+#[async_trait]
+impl Tool for GeneratePptx {
+    fn name(&self) -> &str {
+        "generate_pptx"
+    }
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "generate_pptx".into(),
+            description: "使用 ppt-master 生成原生可编辑 PPTX 文档（支持传入材料文件路径或直接 Markdown 文本）".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "input_path": { "type": "string", "description": "材料文件路径（.md, .txt, .pdf, .docx 等）" },
+                    "content": { "type": "string", "description": "若无文件，可直接提供 Markdown 或大纲文本" },
+                    "output_name": { "type": "string", "description": "输出文件名（可选）" }
+                }
+            }),
+        }
+    }
+    async fn run(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput> {
+        let output_dir = ctx.workspace_dir.join("exports");
+        std::fs::create_dir_all(&output_dir).ok();
+
+        let input_file = if let Some(path_str) = args.get("input_path").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+            resolve_in_workspace(&ctx.workspace_dir, path_str)?
+        } else if let Some(content) = args.get("content").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+            let temp_name = format!("content_{}.md", chrono::Utc::now().timestamp());
+            let temp_path = output_dir.join(temp_name);
+            std::fs::write(&temp_path, content).map_err(|e| AppError::Tool(format!("写入临时文件失败: {e}")))?;
+            temp_path
+        } else {
+            return Ok(ToolOutput::err("必须提供 input_path 或 content 之一"));
+        };
+
+        match self.ppt.generate_pptx(&input_file, &output_dir) {
+            Ok(pptx_path) => Ok(ToolOutput::ok(format!("成功生成 PPTX 文件: {}", pptx_path.display()))),
+            Err(e) => Ok(ToolOutput::err(format!("生成 PPT 失败: {e}"))),
+        }
+    }
+}
+
+pub struct PptxToVideo {
+    pub ppt: std::sync::Arc<crate::ppt::PptRuntime>,
+}
+
+#[async_trait]
+impl Tool for PptxToVideo {
+    fn name(&self) -> &str {
+        "pptx_to_video"
+    }
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "pptx_to_video".into(),
+            description: "将 PPTX 演示文稿转为带离线 TTS 演讲者旁白的口播 MP4 视频".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pptx_path": { "type": "string", "description": "PPTX 文件路径" },
+                    "output_path": { "type": "string", "description": "输出的 MP4 文件路径（可选，默认 exports 目录）" }
+                },
+                "required": ["pptx_path"]
+            }),
+        }
+    }
+    async fn run(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput> {
+        let pptx_arg = arg(&args, "pptx_path")?;
+        let pptx_path = resolve_in_workspace(&ctx.workspace_dir, pptx_arg)?;
+        let output_dir = ctx.workspace_dir.join("exports");
+        std::fs::create_dir_all(&output_dir).ok();
+
+        let output_path = if let Some(out_str) = args.get("output_path").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+            resolve_in_workspace(&ctx.workspace_dir, out_str)?
+        } else {
+            let stem = pptx_path.file_stem().and_then(|s| s.to_str()).unwrap_or("presentation");
+            output_dir.join(format!("{}_{}.mp4", stem, chrono::Utc::now().timestamp()))
+        };
+
+        match self.ppt.pptx_to_video(&pptx_path, &output_path) {
+            Ok(mp4_path) => Ok(ToolOutput::ok(format!("成功生成口播视频: {}", mp4_path.display()))),
+            Err(e) => Ok(ToolOutput::err(format!("生成视频失败: {e}"))),
+        }
+    }
+}
+

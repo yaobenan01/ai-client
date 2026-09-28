@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   model_id    TEXT,
   workflow_id TEXT,
   result      TEXT,
+  logs        TEXT,
+  artifacts   TEXT,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
@@ -54,13 +56,22 @@ CREATE TABLE IF NOT EXISTS plugins (
 "#;
 
 impl Db {
-    /// Open (or create) the SQLite database and apply the schema.
+    /// Open (or create) the SQLite database and apply the schema and pragmatic performance settings.
     pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;",
+        )?;
         conn.execute_batch(SCHEMA)?;
+        // Graceful column migrations for existing databases
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN logs TEXT", []);
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN artifacts TEXT", []);
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
@@ -68,6 +79,8 @@ impl Db {
     pub fn open_in_memory() -> Result<Self, rusqlite::Error> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN logs TEXT", []);
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN artifacts TEXT", []);
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 

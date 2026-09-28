@@ -22,10 +22,16 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/models", get(list_models).post(add_model))
         .route("/api/models/import", post(import_model))
         .route("/api/models/:id/default", post(set_default_model))
+        .route("/api/models/:id/test", post(test_model))
         .route("/api/models/:id", delete(remove_model))
         .route("/api/tasks", get(list_tasks).post(create_task))
-        .route("/api/tasks/:id", get(get_task))
+        .route("/api/tasks/:id", get(get_task).delete(delete_task))
         .route("/api/tasks/:id/run", post(run_task))
+        .route("/api/tasks/:id/cancel", post(cancel_task))
+        .route("/api/ppt/quick-generate", post(quick_generate_pptx))
+        .route("/api/ppt/quick-video", post(quick_pptx_to_video))
+        .route("/api/workspace/files", get(list_workspace_files))
+        .route("/api/workspace/download/*path", get(download_workspace_file))
         .route("/api/plugins", get(list_plugins))
         .route("/api/plugins/install", post(install_plugin))
         .route("/api/system/info", get(system_info))
@@ -160,6 +166,12 @@ async fn run_task(State(core): AppState, Path(id): Path<String>) -> ApiResult {
     Ok(Json(json!({ "task": core.get_task(&id)?, "started": true })))
 }
 
+async fn test_model(State(core): AppState, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult {
+    let prompt = body["prompt"].as_str();
+    let res = core.test_model(&id, prompt).await?;
+    Ok(Json(res))
+}
+
 async fn list_plugins(State(core): AppState) -> ApiResult {
     Ok(Json(json!({ "plugins": core.plugins.list() })))
 }
@@ -168,6 +180,88 @@ async fn install_plugin(State(core): AppState, Json(body): Json<Value>) -> ApiRe
     let path = body["path"].as_str().unwrap_or_default();
     let skill = core.plugins.install(std::path::Path::new(path))?;
     Ok(Json(json!({ "plugin": skill })))
+}
+
+async fn cancel_task(State(core): AppState, Path(id): Path<String>) -> ApiResult {
+    core.cancel_task(&id)?;
+    Ok(Json(json!({ "ok": true, "cancelled": id })))
+}
+
+async fn delete_task(State(core): AppState, Path(id): Path<String>) -> ApiResult {
+    core.delete_task(&id)?;
+    Ok(Json(json!({ "ok": true, "deleted": id })))
+}
+
+async fn quick_generate_pptx(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
+    let input_path = body["input_path"].as_str();
+    let content = body["content"].as_str();
+    let pptx_path = core.quick_generate_pptx(input_path, content)?;
+    let rel = pptx_path
+        .strip_prefix(&core.config.workspace_dir)
+        .unwrap_or(&pptx_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    Ok(Json(json!({
+        "ok": true,
+        "path": rel,
+        "filename": pptx_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+    })))
+}
+
+async fn quick_pptx_to_video(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
+    let pptx_path = body["pptx_path"].as_str().unwrap_or_default();
+    let output_path = body["output_path"].as_str();
+    let video_path = core.quick_pptx_to_video(pptx_path, output_path)?;
+    let rel = video_path
+        .strip_prefix(&core.config.workspace_dir)
+        .unwrap_or(&video_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    Ok(Json(json!({
+        "ok": true,
+        "path": rel,
+        "filename": video_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+    })))
+}
+
+async fn list_workspace_files(State(core): AppState) -> ApiResult {
+    let files = core.list_workspace_files()?;
+    Ok(Json(json!({ "files": files })))
+}
+
+async fn download_workspace_file(
+    State(core): AppState,
+    Path(rel_path): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    let clean = rel_path.trim_start_matches('/').replace("..", "");
+    let full = core.config.workspace_dir.join(&clean);
+    if !full.exists() || !full.is_file() {
+        return Err(ApiError(StatusCode::NOT_FOUND, json!({"error": "文件不存在"})));
+    }
+    let filename = full.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = full.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let content_type = match ext.as_str() {
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "mp4" => "video/mp4",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "json" => "application/json",
+        "md" | "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    };
+    let bytes = std::fs::read(&full)
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": e.to_string()})))?;
+
+    let disposition = format!("inline; filename=\"{filename}\"");
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, content_type),
+            (axum::http::header::CONTENT_DISPOSITION, &disposition),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 async fn system_info(State(core): AppState) -> ApiResult {

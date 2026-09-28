@@ -54,6 +54,10 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), Arc::new(tool));
     }
 
+    pub fn register_shared(&mut self, tool: SharedTool) {
+        self.tools.insert(tool.name().to_string(), tool);
+    }
+
     pub fn get(&self, name: &str) -> Option<SharedTool> {
         self.tools.get(name).cloned()
     }
@@ -74,5 +78,13 @@ pub fn default_registry() -> ToolRegistry {
     r.register(builtin::WriteFile);
     r.register(builtin::ListDir);
     r.register(builtin::RunCommand);
+    r
+}
+
+/// Registry pre-populated with built-in tools and PPT/video tools.
+pub fn default_registry_with_ppt(ppt: Arc<crate::ppt::PptRuntime>) -> ToolRegistry {
+    let mut r = default_registry();
+    r.register(builtin::GeneratePptx { ppt: ppt.clone() });
+    r.register(builtin::PptxToVideo { ppt });
     r
 }
