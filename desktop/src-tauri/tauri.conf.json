@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.local.aiclient",
   "build": {
-    "beforeDevCommand": "pnpm --dir ../web run dev",
+    "beforeDevCommand": "pnpm --dir ../../web run dev || pnpm --dir ../web run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "pnpm --dir ../web run build",
+    "beforeBuildCommand": "pnpm --dir ../../web run build || pnpm --dir ../web run build",
     "frontendDist": "../../web/dist"
   },
   "app": {

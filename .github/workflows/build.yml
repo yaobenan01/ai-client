@@ -99,7 +99,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: desktop/src-tauri -> desktop/src-tauri/target
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -107,7 +107,9 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
       - name: Linux deps
         if: runner.os == 'Linux'
         run: |
@@ -123,21 +125,37 @@ jobs:
           TRIPLE="${{ matrix.target }}"
           if [ -f "core/target/$TRIPLE/release/ai-client.exe" ]; then
             cp "core/target/$TRIPLE/release/ai-client.exe" "desktop/src-tauri/binaries/ai-client-$TRIPLE.exe"
+            cp "core/target/$TRIPLE/release/ai-client.exe" "desktop/src-tauri/binaries/ai-client.exe"
           else
             cp "core/target/$TRIPLE/release/ai-client" "desktop/src-tauri/binaries/ai-client-$TRIPLE"
+            cp "core/target/$TRIPLE/release/ai-client" "desktop/src-tauri/binaries/ai-client"
           fi
-      - name: Install desktop deps
-        run: pnpm --dir desktop install
+          echo "Staged binaries:"
+          ls -la desktop/src-tauri/binaries/
       - name: Install web deps
         run: pnpm install --dir web
+      - name: Build web
+        run: pnpm --dir web run build
+      - name: Install desktop deps
+        run: pnpm --dir desktop install
       - name: Generate icons
         run: pnpm --dir desktop tauri icon src-tauri/icons/icon.png
       - name: Tauri build
-        run: pnpm --dir desktop tauri build
+        run: pnpm --dir desktop tauri build --target ${{ matrix.target }}
+      - name: List bundle output
+        shell: bash
+        run: |
+          echo "Listing release targets:"
+          ls -la desktop/src-tauri/target/ || true
+          ls -la "desktop/src-tauri/target/${{ matrix.target }}/release/bundle/" || true
+          ls -la "desktop/src-tauri/target/release/bundle/" || true
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
           name: ai-client-desktop-${{ matrix.target }}
-          path: desktop/src-tauri/target/release/bundle/
+          if-no-files-found: warn
+          path: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/
+            desktop/src-tauri/target/release/bundle/
 
 
