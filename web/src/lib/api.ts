@@ -25,6 +25,21 @@ async function request<T = any>(path: string, opts: RequestInit = {}): Promise<T
   return data as T
 }
 
+/// 等待内嵌 core 就绪。桌面端由 Tauri 壳负责拉起，冷启动需要一点时间。
+export async function waitForCore(timeoutMs = 30000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(BASE + '/health', { cache: 'no-store' })
+      if (res.ok) return true
+    } catch {
+      // core 尚未监听，继续重试
+    }
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  return false
+}
+
 export const api = {
   health: () => request('/health'),
   register: (username: string, password: string) => request('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password }) }),
@@ -52,3 +67,4 @@ export const api = {
   installPlugin: (path: string) => request('/api/plugins/install', { method: 'POST', body: JSON.stringify({ path }) }),
   systemInfo: () => request('/api/system/info')
 }
+

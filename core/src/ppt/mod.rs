@@ -49,11 +49,19 @@ impl PptRuntime {
             .or_else(|| std::env::var_os("AI_CLIENT_PPT_MASTER_DIR").map(PathBuf::from))
             .ok_or_else(|| AppError::Ppt("未配置 ppt-master 目录".into()))?;
 
+        // 允许通过环境变量注入随包分发的渲染/合成工具，免去用户自行安装。
+        let libreoffice_exe = cfg
+            .libreoffice_exe
+            .or_else(|| std::env::var_os("AI_CLIENT_LIBREOFFICE").map(PathBuf::from));
+        let ffmpeg_exe = cfg
+            .ffmpeg_exe
+            .or_else(|| std::env::var_os("AI_CLIENT_FFMPEG").map(PathBuf::from));
+
         Ok(Self {
             python_exe,
             ppt_master_dir,
-            libreoffice_exe: cfg.libreoffice_exe,
-            ffmpeg_exe: cfg.ffmpeg_exe,
+            libreoffice_exe,
+            ffmpeg_exe,
             tts_engine: cfg.tts_engine,
         })
     }
@@ -90,16 +98,22 @@ impl PptRuntime {
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let status = Command::new(&self.python_exe)
-            .arg(&script)
+        let mut cmd = Command::new(&self.python_exe);
+        cmd.arg(&script)
             .arg("--pptx")
             .arg(pptx)
             .arg("--out")
             .arg(output)
             .arg("--tts")
-            .arg(&self.tts_engine)
-            .env("AI_CLIENT_FFMPEG", self.ffmpeg_exe.as_ref().map(|p| p.as_os_str()).unwrap_or_default())
-            .env("AI_CLIENT_LIBREOFFICE", self.libreoffice_exe.as_ref().map(|p| p.as_os_str()).unwrap_or_default())
+            .arg(&self.tts_engine);
+        // 仅在内置/显式配置时覆盖，避免把脚本已有的环境探测清空。
+        if let Some(p) = &self.ffmpeg_exe {
+            cmd.env("AI_CLIENT_FFMPEG", p);
+        }
+        if let Some(p) = &self.libreoffice_exe {
+            cmd.env("AI_CLIENT_LIBREOFFICE", p);
+        }
+        let status = cmd
             .status()
             .map_err(|e| AppError::Ppt(format!("无法启动视频渲染: {e}")))?;
         if !status.success() {
@@ -120,3 +134,4 @@ fn newest_pptx(dir: &Path) -> Result<PathBuf> {
         .map(|e| e.path())
         .ok_or_else(|| AppError::Ppt("未找到生成的 .pptx 文件".into()))
 }
+

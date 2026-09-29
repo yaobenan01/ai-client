@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './store/auth'
+import { waitForCore } from './lib/api'
 import Login from './pages/Login'
 import Models from './pages/Models'
 import Tasks from './pages/Tasks'
@@ -31,10 +32,59 @@ function Logo({ size = 34 }: { size?: number }) {
   )
 }
 
+type CoreState = 'starting' | 'ready' | 'failed'
+
+/** 冷启动时 core 还没监听端口，用友好提示替代空白/报错窗口。 */
+function BootScreen({ failed, onRetry }: { failed?: boolean; onRetry?: () => void }) {
+  return (
+    <div className="login-wrap">
+      <div className="card" style={{ width: 430, textAlign: 'center', padding: '34px 28px' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+          <Logo size={46} />
+        </div>
+        <h3 style={{ marginBottom: 8 }}>
+          {failed ? '本地核心服务启动失败' : '正在启动本地 AI 引擎'}
+        </h3>
+        <p className="muted" style={{ fontSize: 13, lineHeight: 1.7, margin: 0 }}>
+          {failed
+            ? '核心引擎未能就绪。请查看日志 %APPDATA%\\com.local.aiclient\\ai-client\\core.log 后重试。'
+            : '正在拉起内置执行引擎，首次启动可能需要几秒…'}
+        </p>
+        {!failed && (
+          <div className="thinking" style={{ marginTop: 18 }}><i /><i /><i /></div>
+        )}
+        {failed && onRetry && (
+          <button className="btn" style={{ marginTop: 18 }} onClick={onRetry}>重新尝试</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const { user, loading, refresh, logout } = useAuth()
+  const [core, setCore] = useState<CoreState>('starting')
+  const [attempt, setAttempt] = useState(0)
 
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    let alive = true
+    setCore('starting')
+    waitForCore(30000).then((ok) => {
+      if (!alive) return
+      if (ok) {
+        setCore('ready')
+        refresh()
+      } else {
+        setCore('failed')
+      }
+    })
+    return () => { alive = false }
+  }, [refresh, attempt])
+
+  if (core === 'failed') {
+    return <BootScreen failed onRetry={() => setAttempt((n) => n + 1)} />
+  }
+  if (core === 'starting') return <BootScreen />
 
   if (loading) {
     return (
@@ -77,3 +127,4 @@ export default function App() {
     </div>
   )
 }
+

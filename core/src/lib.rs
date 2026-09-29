@@ -85,6 +85,53 @@ fn detect_llama_server_bin(config: &AppConfig) -> PathBuf {
     PathBuf::from(exe)
 }
 
+/// 定位 ppt-master（run.py 所在目录）：显式配置 > 数据目录 > 安装包内置资源 > 源码目录。
+fn detect_ppt_master_dir(config: &AppConfig) -> PathBuf {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1) 显式环境变量（桌面壳会把安装包内的目录通过它传进来）
+    if let Some(p) = std::env::var_os("AI_CLIENT_PPT_MASTER_DIR") {
+        candidates.push(PathBuf::from(p));
+    }
+    // 2) 用户数据目录（升级或手动安装的插件）
+    candidates.push(config.plugins_dir.join("ppt-master"));
+
+    // 3) 随安装包分发的内置资源
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let mut bases = vec![dir.to_path_buf()];
+            if let Some(parent) = dir.parent() {
+                bases.push(parent.to_path_buf());
+            }
+            for base in &bases {
+                candidates.push(base.join("plugins").join("ppt-master"));
+                candidates.push(base.join("resources").join("plugins").join("ppt-master"));
+                candidates.push(
+                    base.join("_up_")
+                        .join("_up_")
+                        .join("plugins")
+                        .join("ppt-master"),
+                );
+                candidates.push(base.join("_up_").join("plugins").join("ppt-master"));
+            }
+        }
+    }
+
+    // 4) 开发源码目录
+    candidates.push(PathBuf::from("plugins/ppt-master"));
+    candidates.push(PathBuf::from("../plugins/ppt-master"));
+    candidates.push(PathBuf::from("../../plugins/ppt-master"));
+    candidates.push(PathBuf::from("../../../plugins/ppt-master"));
+
+    for c in &candidates {
+        if c.join("run.py").is_file() {
+            return c.clone();
+        }
+    }
+    // 找不到时返回数据目录路径，保持既有报错语义
+    config.plugins_dir.join("ppt-master")
+}
+
 impl Core {
     /// Initialize the core: open DB, apply schema, load persisted state.
     pub fn init(config: AppConfig) -> Result<Self> {
@@ -94,7 +141,7 @@ impl Core {
         load_model_profiles(&db, &models)?;
 
         let ppt = PptRuntime::detect(PptRuntimeConfig {
-            ppt_master_dir: Some(config.plugins_dir.join("ppt-master")),
+            ppt_master_dir: Some(detect_ppt_master_dir(&config)),
             tts_engine: "cosyvoice".into(),
             ..Default::default()
         })?;
@@ -609,4 +656,5 @@ fn load_model_profiles(db: &Db, registry: &ModelRegistry) -> Result<()> {
     registry.set_default(default);
     Ok(())
 }
+
 
