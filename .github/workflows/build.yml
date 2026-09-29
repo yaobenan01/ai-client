@@ -24,7 +24,7 @@ jobs:
   build-core:
     name: core (${{ matrix.target }})
     # macOS runner 按 10 倍分钟计费：默认跳过，需要时用 workflow_dispatch 勾选 full_matrix
-    if: ${{ !startsWith(matrix.os, 'macos') || inputs.full_matrix }}
+    if: ${{ !startsWith(matrix.os, 'macos') || github.event.inputs.full_matrix == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -94,7 +94,7 @@ jobs:
   build-desktop:
     name: desktop (${{ matrix.target }})
     needs: [build-core]
-    if: ${{ !startsWith(matrix.os, 'macos') || inputs.full_matrix }}
+    if: ${{ !startsWith(matrix.os, 'macos') || github.event.inputs.full_matrix == 'true' }}
     strategy:
       fail-fast: false
       matrix:
