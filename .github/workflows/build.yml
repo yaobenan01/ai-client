@@ -3,19 +3,8 @@ name: build
 on:
   push:
     branches: [main]
-    # 纯文档改动不触发构建，节省 Actions 分钟
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
   pull_request:
   workflow_dispatch:
-    inputs:
-      full_matrix:
-        description: '包含 macOS 全部目标（macOS 分钟按 10 倍计费，谨慎开启）'
-        required: false
-        type: boolean
-        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,8 +12,6 @@ env:
 jobs:
   build-core:
     name: core (${{ matrix.target }})
-    # macOS runner 按 10 倍分钟计费（私有仓库）：公开仓库自动全平台构建；私有仓库需 workflow_dispatch 勾 full_matrix
-    if: ${{ !startsWith(matrix.os, 'macos') || github.event.repository.private == false || github.event.inputs.full_matrix == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -94,7 +81,6 @@ jobs:
   build-desktop:
     name: desktop (${{ matrix.target }})
     needs: [build-core]
-    if: ${{ !startsWith(matrix.os, 'macos') || github.event.repository.private == false || github.event.inputs.full_matrix == 'true' }}
     strategy:
       fail-fast: false
       matrix:
