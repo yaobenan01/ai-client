@@ -44,7 +44,6 @@ export default function Tasks() {
   const [tasks, setTasks] = useState<any[]>([])
   const [models, setModels] = useState<any[]>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
-  const [title, setTitle] = useState('')
   const [input, setInput] = useState('')
   const [filter, setFilter] = useState<'all' | 'running' | 'done' | 'failed'>('all')
   const [msg, setMsg] = useState('')
@@ -62,6 +61,13 @@ export default function Tasks() {
     load().catch(() => {})
   }, [load])
 
+  function deriveTitle(text: string): string {
+    const match = TEMPLATES.find((t) => t.prompt === text)
+    if (match) return match.title.replace(/^[^\s]+\s/, '')
+    const firstLine = text.trim().split('\n')[0].replace(/^[#*\-•\s]+/, '').trim()
+    return firstLine.slice(0, 30) || '新建任务'
+  }
+
   async function create(e: React.FormEvent) {
     e.preventDefault()
     if (!input.trim()) return
@@ -69,11 +75,10 @@ export default function Tasks() {
     setMsg('')
     try {
       const r = await api.createTask({
-        title: title.trim() || input.trim().slice(0, 24),
+        title: deriveTitle(input),
         input,
         model_id: selectedModel || undefined,
       })
-      setTitle('')
       setInput('')
       await api.runTask(r.task.id).catch(() => {})
       await load()
@@ -97,7 +102,6 @@ export default function Tasks() {
   }
 
   function applyTemplate(tpl: typeof TEMPLATES[0]) {
-    setTitle(tpl.title.replace(/^[^\s]+\s/, ''))
     setInput(tpl.prompt)
   }
 
@@ -129,21 +133,13 @@ export default function Tasks() {
       {/* 创建任务卡片 */}
       <div className="hero" style={{ marginBottom: 20 }}>
         <form onSubmit={create}>
-          <div className="row" style={{ marginBottom: 12, gap: 12 }}>
-            <div className="field" style={{ flex: 2, marginBottom: 0 }}>
-              <label>任务目标 / 标题</label>
-              <input
-                className="input"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="简明扼要的目标标题（可选）"
-              />
-            </div>
-
-            <div className="field" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
-              <label>执行模型</label>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 12 }}>
+            <label style={{ margin: 0, fontWeight: 600 }}>任务详细要求（支持自然语言规划）</label>
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <span className="muted" style={{ fontSize: 13 }}>执行模型：</span>
               <select
                 className="input"
+                style={{ width: 'auto', minWidth: 200, height: 34, padding: '2px 8px', fontSize: 13 }}
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
               >
@@ -158,7 +154,6 @@ export default function Tasks() {
           </div>
 
           <div className="field" style={{ marginBottom: 12 }}>
-            <label>任务详细要求（支持自然语言规划）</label>
             <textarea
               className="input"
               rows={3}
