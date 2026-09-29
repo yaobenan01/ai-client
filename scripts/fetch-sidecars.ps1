@@ -1,4 +1,4 @@
-﻿# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
+# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
 # 目标机器无需安装 Python / FFmpeg / LibreOffice / 模型。
 param(
   [switch]$LlamaCpp,
@@ -64,40 +64,38 @@ if ($LlamaCpp) {
   }
 }
 
-# 2) FFmpeg 静态构建（包含 ffmpeg.exe 与 ffprobe.exe）
+# 2) FFmpeg 静态构建（仅保留 ffmpeg.exe；ffprobe 当前无调用方，且避免重复存放）
 if ($Ffmpeg) {
   $destExe = "$side\media\ffmpeg\bin\ffmpeg.exe"
-  if (-not (Test-Path $destExe) -and -not (Test-Path "$side\media\ffmpeg\ffmpeg.exe")) {
+  if (-not (Test-Path $destExe)) {
     Write-Host "==> 准备 FFmpeg..." -ForegroundColor Cyan
     $zip = "$env:TEMP\ffmpeg-release-essentials.zip"
     Fetch "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" $zip
     $tempExtract = "$env:TEMP\ffmpeg_unpack"
     if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
     New-Item -ItemType Directory -Force -Path $tempExtract | Out-Null
-    
     tar -xf $zip -C $tempExtract
-    
+
     $destBin = "$side\media\ffmpeg\bin"
-    $destRoot = "$side\media\ffmpeg"
     New-Item -ItemType Directory -Force -Path $destBin | Out-Null
-    
+
     $ffExe = Get-ChildItem -Path $tempExtract -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
-    $fpExe = Get-ChildItem -Path $tempExtract -Filter "ffprobe.exe" -Recurse | Select-Object -First 1
-    if ($ffExe) {
-      Copy-Item $ffExe.FullName "$destBin\ffmpeg.exe" -Force
-      Copy-Item $ffExe.FullName "$destRoot\ffmpeg.exe" -Force
-    }
-    if ($fpExe) {
-      Copy-Item $fpExe.FullName "$destBin\ffprobe.exe" -Force
-      Copy-Item $fpExe.FullName "$destRoot\ffprobe.exe" -Force
-    }
+    if (-not $ffExe) { throw "未在压缩包中找到 ffmpeg.exe" }
+    Copy-Item $ffExe.FullName "$destBin\ffmpeg.exe" -Force
+
     Remove-Item -Recurse -Force $tempExtract -ErrorAction SilentlyContinue
     Remove-Item $zip -Force -ErrorAction SilentlyContinue
   } else {
     Write-Host "FFmpeg 已存在，跳过拉取。" -ForegroundColor Green
   }
+  # 清理历史遗留的重复/无用文件，减小最终包体
+  foreach ($legacy in @(
+      "$side\media\ffmpeg\ffmpeg.exe",
+      "$side\media\ffmpeg\ffprobe.exe",
+      "$side\media\ffmpeg\bin\ffprobe.exe")) {
+    if (Test-Path $legacy) { Remove-Item -Force $legacy -ErrorAction SilentlyContinue }
+  }
 }
-
 # 3) LibreOffice（自动拉取并解包为自包含绿色渲染器，清理语言包体积）
 if ($LibreOffice) {
   $sofficeExe = "$side\media\libreoffice\program\soffice.exe"
