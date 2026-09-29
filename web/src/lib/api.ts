@@ -62,7 +62,16 @@ export const api = {
   quickGeneratePpt: (payload: { input_path?: string; content?: string }) => request<{ ok: boolean; path: string; filename: string }>('/api/ppt/quick-generate', { method: 'POST', body: JSON.stringify(payload) }),
   quickRenderVideo: (payload: { pptx_path: string; output_path?: string }) => request<{ ok: boolean; path: string; filename: string }>('/api/ppt/quick-video', { method: 'POST', body: JSON.stringify(payload) }),
   listWorkspaceFiles: () => request<{ files: Array<{ name: string; path: string; ext: string; size: number; modified: number }> }>('/api/workspace/files'),
-  getArtifactUrl: (relPath: string) => `${BASE}/api/workspace/download/${encodeURIComponent(relPath.replace(/^\/+/, ''))}`,
+  // 逐段编码：整段 encodeURIComponent 会把 "/" 编成 %2F，部分网关/反代会 404
+  getArtifactUrl: (relPath: string) => {
+    const clean = relPath.replace(/^\/+/, '')
+    const encoded = clean.split('/').map(encodeURIComponent).join('/')
+    return `${BASE}/api/workspace/download/${encoded}`
+  },
+  openArtifact: (path: string) =>
+    request<{ ok: boolean }>('/api/workspace/open', { method: 'POST', body: JSON.stringify({ path }) }),
+  revealArtifact: (path: string) =>
+    request<{ ok: boolean }>('/api/workspace/reveal', { method: 'POST', body: JSON.stringify({ path }) }),
   listPlugins: () => request<{ plugins: any[] }>('/api/plugins'),
   installPlugin: (path: string) => request('/api/plugins/install', { method: 'POST', body: JSON.stringify({ path }) }),
   systemInfo: () => request('/api/system/info')

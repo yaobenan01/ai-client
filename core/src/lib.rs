@@ -132,6 +132,184 @@ fn detect_ppt_master_dir(config: &AppConfig) -> PathBuf {
     config.plugins_dir.join("ppt-master")
 }
 
+/// 定位 Python 运行时（优先内置自包含运行库，免除用户安装）：显式配置 > 内置 sidecar > 源码目录 > 系统 PATH。
+fn detect_python_exe(config: &AppConfig) -> PathBuf {
+    if let Some(p) = std::env::var_os("AI_CLIENT_PYTHON") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return pb;
+        }
+    }
+    let exe = if cfg!(windows) { "python.exe" } else { "python3" };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let mut bases = vec![dir.to_path_buf()];
+            if let Some(parent) = dir.parent() {
+                bases.push(parent.to_path_buf());
+            }
+            for base in &bases {
+                candidates.push(base.join("_up_").join("_up_").join("sidecars").join("python").join("runtime").join(exe));
+                candidates.push(base.join("_up_").join("_up_").join("sidecars").join("python").join("runtime").join("venv").join("Scripts").join(exe));
+                candidates.push(base.join("_up_").join("_up_").join("sidecars").join("python").join(exe));
+                candidates.push(base.join("resources").join("sidecars").join("python").join("runtime").join(exe));
+                candidates.push(base.join("sidecars").join("python").join("runtime").join(exe));
+                candidates.push(base.join("python").join("runtime").join(exe));
+            }
+        }
+    }
+
+    candidates.push(PathBuf::from("sidecars/python/runtime").join(exe));
+    candidates.push(PathBuf::from("sidecars/python/runtime/venv/Scripts").join(exe));
+    candidates.push(PathBuf::from("sidecars/python").join(exe));
+    candidates.push(PathBuf::from("../sidecars/python/runtime").join(exe));
+    candidates.push(PathBuf::from("../../sidecars/python/runtime").join(exe));
+    candidates.push(PathBuf::from("../../../sidecars/python/runtime").join(exe));
+    candidates.push(config.data_dir.join("sidecars").join("python").join("runtime").join(exe));
+
+    for c in &candidates {
+        if c.is_file() {
+            return c.clone();
+        }
+    }
+
+    if let Ok(path) = std::env::var("PATH") {
+        for p in std::env::split_paths(&path) {
+            let c = p.join(exe);
+            if c.is_file() {
+                let s = c.to_string_lossy().to_lowercase();
+                if !s.contains("windowsapps") {
+                    return c;
+                }
+            }
+        }
+    }
+
+    PathBuf::from(exe)
+}
+
+/// 定位 LibreOffice 渲染器（内置便携版或系统安装）：显式环境变量 > 内置 sidecar > 常见系统安装路径 > 系统 PATH。
+fn detect_libreoffice_exe(_config: &AppConfig) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("AI_CLIENT_LIBREOFFICE") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let exes = if cfg!(windows) {
+        vec!["program/soffice.exe", "program/soffice.com", "soffice.exe"]
+    } else {
+        vec!["soffice", "libreoffice"]
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let mut bases = vec![dir.to_path_buf()];
+            if let Some(parent) = dir.parent() {
+                bases.push(parent.to_path_buf());
+            }
+            for base in &bases {
+                for exe in &exes {
+                    candidates.push(base.join("_up_").join("_up_").join("sidecars").join("media").join("libreoffice").join(exe));
+                    candidates.push(base.join("resources").join("sidecars").join("media").join("libreoffice").join(exe));
+                    candidates.push(base.join("sidecars").join("media").join("libreoffice").join(exe));
+                }
+            }
+        }
+    }
+
+    for exe in &exes {
+        candidates.push(PathBuf::from("sidecars/media/libreoffice").join(exe));
+        candidates.push(PathBuf::from("../sidecars/media/libreoffice").join(exe));
+        candidates.push(PathBuf::from("../../sidecars/media/libreoffice").join(exe));
+        candidates.push(PathBuf::from("../../../sidecars/media/libreoffice").join(exe));
+    }
+
+    if cfg!(windows) {
+        candidates.push(PathBuf::from("C:\\Program Files\\LibreOffice\\program\\soffice.exe"));
+        candidates.push(PathBuf::from("C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe"));
+        candidates.push(PathBuf::from("D:\\Program Files\\LibreOffice\\program\\soffice.exe"));
+    }
+
+    for c in &candidates {
+        if c.is_file() {
+            return Some(c.clone());
+        }
+    }
+
+    if let Ok(path) = std::env::var("PATH") {
+        for p in std::env::split_paths(&path) {
+            for exe in &["soffice.exe", "soffice.com", "soffice", "libreoffice"] {
+                let c = p.join(exe);
+                if c.is_file() {
+                    return Some(c);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// 定位 FFmpeg 合成器（内置静态构建或系统安装）：显式环境变量 > 内置 sidecar > 系统 PATH。
+fn detect_ffmpeg_exe(_config: &AppConfig) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("AI_CLIENT_FFMPEG") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let exes = if cfg!(windows) {
+        vec!["bin/ffmpeg.exe", "ffmpeg.exe"]
+    } else {
+        vec!["bin/ffmpeg", "ffmpeg"]
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let mut bases = vec![dir.to_path_buf()];
+            if let Some(parent) = dir.parent() {
+                bases.push(parent.to_path_buf());
+            }
+            for base in &bases {
+                for exe in &exes {
+                    candidates.push(base.join("_up_").join("_up_").join("sidecars").join("media").join("ffmpeg").join(exe));
+                    candidates.push(base.join("resources").join("sidecars").join("media").join("ffmpeg").join(exe));
+                    candidates.push(base.join("sidecars").join("media").join("ffmpeg").join(exe));
+                }
+            }
+        }
+    }
+
+    for exe in &exes {
+        candidates.push(PathBuf::from("sidecars/media/ffmpeg").join(exe));
+        candidates.push(PathBuf::from("../sidecars/media/ffmpeg").join(exe));
+        candidates.push(PathBuf::from("../../sidecars/media/ffmpeg").join(exe));
+        candidates.push(PathBuf::from("../../../sidecars/media/ffmpeg").join(exe));
+    }
+
+    for c in &candidates {
+        if c.is_file() {
+            return Some(c.clone());
+        }
+    }
+
+    if let Ok(path) = std::env::var("PATH") {
+        let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+        for p in std::env::split_paths(&path) {
+            let c = p.join(exe);
+            if c.is_file() {
+                return Some(c);
+            }
+        }
+    }
+
+    None
+}
+
 impl Core {
     /// Initialize the core: open DB, apply schema, load persisted state.
     pub fn init(config: AppConfig) -> Result<Self> {
@@ -141,9 +319,11 @@ impl Core {
         load_model_profiles(&db, &models)?;
 
         let ppt = PptRuntime::detect(PptRuntimeConfig {
+            python_exe: Some(detect_python_exe(&config)),
             ppt_master_dir: Some(detect_ppt_master_dir(&config)),
+            libreoffice_exe: detect_libreoffice_exe(&config),
+            ffmpeg_exe: detect_ffmpeg_exe(&config),
             tts_engine: "cosyvoice".into(),
-            ..Default::default()
         })?;
         let ppt_arc = Arc::new(ppt.clone());
         let tools = Arc::new(crate::tools::default_registry_with_ppt(ppt_arc));
@@ -267,14 +447,19 @@ impl Core {
 
     /// Report bundled runtime availability (for UI diagnostics).
     pub fn runtime_status(&self) -> serde_json::Value {
+        let python_ready = self.ppt.python_exe.is_file()
+            || (!self.ppt.python_exe.to_string_lossy().is_empty()
+                && self.ppt.python_exe != std::path::Path::new("python")
+                && self.ppt.python_exe != std::path::Path::new("python3")
+                && self.ppt.python_exe.exists());
         serde_json::json!({
             "llama_server": self.llama.is_available(),
             "llama_server_bin": self.llama.server_bin().display().to_string(),
-            "python": self.ppt.python_exe.exists(),
+            "python": python_ready,
             "ppt_master": self.ppt.ppt_master_dir.join("run.py").exists(),
             "tts_engine": self.ppt.tts_engine,
-            "libreoffice": self.ppt.libreoffice_exe.as_ref().map(|p| p.exists()).unwrap_or(false),
-            "ffmpeg": self.ppt.ffmpeg_exe.as_ref().map(|p| p.exists()).unwrap_or(false)
+            "libreoffice": self.ppt.libreoffice_exe.as_ref().map(|p| p.is_file()).unwrap_or(false),
+            "ffmpeg": self.ppt.ffmpeg_exe.as_ref().map(|p| p.is_file()).unwrap_or(false)
         })
     }
 
@@ -604,6 +789,80 @@ impl Core {
         }
         files.sort_by(|a, b| b["modified"].as_u64().cmp(&a["modified"].as_u64()));
         Ok(files)
+    }
+
+    /// 解析工作区内的相对路径，拒绝越界访问。
+    pub fn resolve_workspace_path(&self, rel: &str) -> Result<PathBuf> {
+        let clean = rel.trim_start_matches(|c| c == '/' || c == '\\').replace("..", "");
+        if clean.trim().is_empty() {
+            return Err(crate::error::AppError::Config("缺少文件路径".into()));
+        }
+        let full = self.config.workspace_dir.join(&clean);
+        if !full.is_file() {
+            return Err(crate::error::AppError::NotFound(format!("文件不存在: {clean}")));
+        }
+        Ok(full)
+    }
+
+    /// 用系统默认程序打开工作区内的文件。
+    pub fn open_workspace_file(&self, rel: &str) -> Result<()> {
+        let path = self.resolve_workspace_path(rel)?;
+        open_with_system(&path)
+    }
+
+    /// 在系统文件管理器中定位（选中）工作区内的文件。
+    pub fn reveal_workspace_file(&self, rel: &str) -> Result<()> {
+        let path = self.resolve_workspace_path(rel)?;
+        reveal_with_system(&path)
+    }
+}
+
+/// 启动一个完全脱离的子进程（不等待其结束）。
+fn spawn_detached(program: &str, args: &[std::ffi::OsString]) -> Result<()> {
+    std::process::Command::new(program)
+        .args(args)
+        .spawn()
+        .map_err(|e| crate::error::AppError::Other(format!("启动 {program} 失败: {e}")))?;
+    Ok(())
+}
+
+/// 用系统默认程序打开文件。
+fn open_with_system(path: &Path) -> Result<()> {
+    let arg = path.as_os_str().to_os_string();
+    if cfg!(target_os = "windows") {
+        // start 的第一个参数是窗口标题，必须显式给空串，
+        // 否则含空格的路径会被当成标题、文件打不开。
+        spawn_detached(
+            "cmd",
+            &[
+                std::ffi::OsString::from("/C"),
+                std::ffi::OsString::from("start"),
+                std::ffi::OsString::from(""),
+                arg,
+            ],
+        )
+    } else if cfg!(target_os = "macos") {
+        spawn_detached("open", &[arg])
+    } else {
+        spawn_detached("xdg-open", &[arg])
+    }
+}
+
+/// 在系统文件管理器中定位文件。
+fn reveal_with_system(path: &Path) -> Result<()> {
+    if cfg!(target_os = "windows") {
+        // explorer 要求 /select, 与路径同参数、不能有空格
+        let mut select = std::ffi::OsString::from("/select,");
+        select.push(path.as_os_str());
+        spawn_detached("explorer", &[select])
+    } else if cfg!(target_os = "macos") {
+        spawn_detached(
+            "open",
+            &[std::ffi::OsString::from("-R"), path.as_os_str().to_os_string()],
+        )
+    } else {
+        let dir = path.parent().unwrap_or(path);
+        spawn_detached("xdg-open", &[dir.as_os_str().to_os_string()])
     }
 }
 

@@ -32,6 +32,8 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/ppt/quick-video", post(quick_pptx_to_video))
         .route("/api/workspace/files", get(list_workspace_files))
         .route("/api/workspace/download/*path", get(download_workspace_file))
+        .route("/api/workspace/open", post(open_workspace_artifact))
+        .route("/api/workspace/reveal", post(reveal_workspace_artifact))
         .route("/api/plugins", get(list_plugins))
         .route("/api/plugins/install", post(install_plugin))
         .route("/api/system/info", get(system_info))
@@ -262,6 +264,20 @@ async fn download_workspace_file(
         bytes,
     )
         .into_response())
+}
+
+/// 用系统默认程序打开工作区内的产物（桌面端主要交互入口）。
+async fn open_workspace_artifact(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
+    let path = body["path"].as_str().unwrap_or_default();
+    core.open_workspace_file(path)?;
+    Ok(Json(json!({ "ok": true, "path": path })))
+}
+
+/// 在系统文件管理器中定位并选中工作区内的产物。
+async fn reveal_workspace_artifact(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
+    let path = body["path"].as_str().unwrap_or_default();
+    core.reveal_workspace_file(path)?;
+    Ok(Json(json!({ "ok": true, "path": path })))
 }
 
 async fn system_info(State(core): AppState) -> ApiResult {
