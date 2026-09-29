@@ -202,7 +202,7 @@ export default function TaskDetail() {
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 12 }}>
             <h3 style={{ margin: 0 }}>📦 交付产物 ({artifactsList.length})</h3>
-            <span className="muted" style={{ fontSize: 12 }}>可直接点击下载或复制路径</span>
+            <span className="muted" style={{ fontSize: 12 }}>可打开文件 / 定位目录 / 下载 / 复制路径</span>
           </div>
           <div className="grid">
             {artifactsList.map((item, idx) => (
