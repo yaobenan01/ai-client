@@ -131,17 +131,12 @@ jobs:
             cp "core/target/$TRIPLE/release/ai-client" "desktop/src-tauri/binaries/ai-client"
           fi
           echo "Staged binaries:"
-          ls -la desktop/src-tauri/binaries/
-      - name: Fetch llama-server sidecar (Windows)
+      - name: Fetch offline sidecars (Windows)
         if: matrix.os == 'windows-latest'
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p sidecars/llama.cpp
-          curl -sL "https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip" -o /tmp/llama.zip || true
-          if [ -f /tmp/llama.zip ]; then
-            unzip -o -q /tmp/llama.zip "llama-server.exe" "*.dll" -d sidecars/llama.cpp/ || true
-          fi
-          ls -la sidecars/llama.cpp/ || true
+          ./scripts/fetch-sidecars.ps1 -All
+          Get-ChildItem -Recurse -Depth 2 sidecars
       - name: Install web deps
         run: pnpm install --dir web
       - name: Build web

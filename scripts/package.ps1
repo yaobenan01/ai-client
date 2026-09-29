@@ -28,7 +28,21 @@ Copy-Item $src (Join-Path $binDir "ai-client-$triple$ext") -Force
 Copy-Item $src (Join-Path $binDir "ai-client$ext") -Force
 Get-ChildItem $binDir | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}} | Format-Table -AutoSize
 
-# 4) 打包（tauri.conf.json 的 beforeBuildCommand 会自动构建 web/dist）
+# 4) 校验内置运行时 sidecars 是否齐备（保证「安装即用」目标）
+Write-Host "==> 校验内置运行时" -ForegroundColor Cyan
+$missing = @()
+if (-not (Test-Path "$root\sidecars\llama.cpp\llama-server.exe")) { $missing += "llama.cpp" }
+if (-not (Test-Path "$root\sidecars\python\runtime\python.exe")) { $missing += "python" }
+if (-not (Test-Path "$root\sidecars\media\ffmpeg\bin\ffmpeg.exe")) { $missing += "ffmpeg" }
+if (-not (Test-Path "$root\sidecars\media\libreoffice\program\soffice.exe")) { $missing += "libreoffice" }
+if ($missing.Count -gt 0) {
+    Write-Host "检测到部分内置运行时缺失：$($missing -join ', ')，自动拉取补齐..." -ForegroundColor Yellow
+    & "$root\scripts\fetch-sidecars.ps1" -All
+} else {
+    Write-Host "内置运行时全部齐备（llama.cpp, python, ffmpeg, libreoffice），将被打入安装包。" -ForegroundColor Green
+}
+
+# 5) 打包（tauri.conf.json 的 beforeBuildCommand 会自动构建 web/dist）
 Write-Host "==> Tauri 打包" -ForegroundColor Cyan
 Push-Location "$root\desktop"
 pnpm install
@@ -36,4 +50,5 @@ pnpm tauri build
 Pop-Location
 
 Write-Host "完成。安装包位于 desktop/src-tauri/target/release/bundle/" -ForegroundColor Green
-Write-Host "提示：内置资源来自 ../../plugins 与 ../../sidecars；如需内置 llama-server，先跑 scripts/fetch-sidecars.ps1 -LlamaCpp" -ForegroundColor Yellow
+Write-Host "安装包已完整内置 Python、FFmpeg、LibreOffice 及模型运行环境，支持目标机器离线开箱即用。" -ForegroundColor Cyan
+

@@ -23,10 +23,16 @@ function Fetch($url, $dest) {
   Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
 }
 
-# llama.cpp llama-server（按平台选择 release 压缩包）
+# llama.cpp llama-server
 if ($LlamaCpp) {
-  Write-Host "llama.cpp：请从 https://github.com/ggml-org/llama.cpp/releases 下载对应平台的 llama-server"
-  Write-Host "  并解压到 sidecars/llama.cpp/bin/<platform>/" -ForegroundColor Yellow
+  $targetExe = "$side\llama.cpp\llama-server.exe"
+  if (-not (Test-Path $targetExe)) {
+    $zip = "$env:TEMP\llama.zip"
+    Fetch "https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip" $zip
+    $targetDir = "$side\llama.cpp"
+    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    tar -xf $zip -C $targetDir "llama-server.exe" "*.dll"
+  }
 }
 
 # FFmpeg 静态构建（Windows 示例；Linux/macOS 请用对应构建）
