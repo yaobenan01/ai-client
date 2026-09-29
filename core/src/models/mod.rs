@@ -7,10 +7,19 @@ use std::sync::{Arc, RwLock};
 pub mod llama_cpp;
 pub mod openai_compat;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// Structured tool-call payload emitted by the assistant (OpenAI format).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// Correlation id for a `tool` role message answering an assistant tool call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Reasoning trace that thinking models require to be echoed back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +33,9 @@ pub struct ToolSpec {
 pub struct ToolCall {
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Provider-assigned call id (required to answer tool calls in OpenAI format).
+    #[serde(default)]
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -31,6 +43,9 @@ pub struct ModelResponse {
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
     pub finish_reason: String,
+    /// Reasoning trace returned by thinking models; must be echoed on next turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[async_trait]
@@ -73,11 +88,17 @@ impl ModelProfile {
                     .unwrap_or("local")
                     .to_string();
                 let api_key = self.config.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
-                Ok(Arc::new(openai_compat::OpenAICompatProvider::new(
+                let temperature = self
+                    .config
+                    .get("temperature")
+                    .and_then(|v| v.as_f64())
+                    .map(|t| t as f32);
+                Ok(Arc::new(openai_compat::OpenAICompatProvider::with_options(
                     self.name.clone(),
                     base_url,
                     model,
                     api_key,
+                    temperature,
                 )))
             }
             other => Err(crate::error::AppError::Model(format!("unsupported model kind: {other}"))),
@@ -129,4 +150,7 @@ impl ModelRegistry {
         }
     }
 }
+
+
+
 

@@ -47,7 +47,7 @@ impl WorkflowEngine {
                     let prompt = render(&step.prompt.clone().unwrap_or_default(), &vars);
                     let resp = self
                         .provider
-                        .chat(&[ChatMessage { role: "user".into(), content: prompt }], &[], 2048)
+                        .chat(&[ChatMessage { role: "user".into(), content: prompt, ..Default::default() }], &[], 2048)
                         .await?;
                     last = Value::String(resp.content.clone());
                     vars.insert("last".into(), resp.content);
@@ -79,5 +79,6 @@ fn render(template: &str, vars: &HashMap<String, String>) -> String {
     }
     out
 }
+
 
 

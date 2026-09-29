@@ -26,3 +26,8 @@ installers/
 *.log
 .DS_Store
 .env
+
+# large local assets
+*.gguf
+artifacts/
+

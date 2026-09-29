@@ -131,8 +131,8 @@ impl Agent {
         F: FnMut(usize, &TaskStep) + Send,
     {
         let mut messages: Vec<ChatMessage> = vec![
-            ChatMessage { role: "system".into(), content: self.config.system_prompt.clone() },
-            ChatMessage { role: "user".into(), content: task_input.to_string() },
+            ChatMessage { role: "system".into(), content: self.config.system_prompt.clone(), ..Default::default() },
+            ChatMessage { role: "user".into(), content: task_input.to_string(), ..Default::default() },
         ];
 
         let specs = self.tools.specs();
@@ -163,7 +163,12 @@ impl Agent {
             // CRITICAL FIX: Only treat as final answer if NO tool calls were returned.
             // Some models return finish_reason="stop" even with tool_calls.
             if resp.tool_calls.is_empty() {
-                messages.push(ChatMessage { role: "assistant".into(), content: resp.content.clone() });
+                messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: resp.content.clone(),
+                    reasoning_content: resp.reasoning_content.clone(),
+                    ..Default::default()
+                });
                 let finish_step = TaskStep {
                     step: step + 1,
                     action: "finish".into(),
@@ -177,12 +182,16 @@ impl Agent {
                 break;
             }
 
-            // Record the assistant turn with tool calls, then execute each requested tool.
-            let mut assistant_turn = resp.content.clone();
-            for call in &resp.tool_calls {
-                assistant_turn.push_str(&format!("\n[tool] {} {}\n", call.name, call.arguments));
-            }
-            messages.push(ChatMessage { role: "assistant".into(), content: assistant_turn });
+            // Record the assistant turn with structured tool calls (OpenAI format),
+            // echoing reasoning_content so thinking models (DeepSeek V4.x) accept
+            // the follow-up request. Then execute each requested tool.
+            messages.push(ChatMessage {
+                role: "assistant".into(),
+                content: resp.content.clone(),
+                tool_calls: Some(resp.tool_calls.clone()),
+                reasoning_content: resp.reasoning_content.clone(),
+                ..Default::default()
+            });
 
             for call in &resp.tool_calls {
                 let call_step = TaskStep {
@@ -210,7 +219,12 @@ impl Agent {
                 steps.push(result_step.clone());
                 reporter(step + 1, &result_step);
 
-                messages.push(ChatMessage { role: "tool".into(), content: obs });
+                messages.push(ChatMessage {
+                    role: "tool".into(),
+                    content: obs,
+                    tool_call_id: Some(call.id.clone()),
+                    ..Default::default()
+                });
             }
         }
 
@@ -263,3 +277,4 @@ mod tests {
         assert!(err.contains("boom"));
     }
 }
+

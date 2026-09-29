@@ -13,15 +13,26 @@ pub struct OpenAICompatProvider {
     base_url: String,
     model: String,
     api_key: Option<String>,
+    temperature: Option<f32>,
     client: reqwest::Client,
 }
 
 impl OpenAICompatProvider {
     pub fn new(name: String, base_url: String, model: String, api_key: Option<String>) -> Self {
+        Self::with_options(name, base_url, model, api_key, None)
+    }
+
+    pub fn with_options(
+        name: String,
+        base_url: String,
+        model: String,
+        api_key: Option<String>,
+        temperature: Option<f32>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
-        Self { name, base_url: base_url.trim_end_matches('/').to_string(), model, api_key, client }
+        Self { name, base_url: base_url.trim_end_matches('/').to_string(), model, api_key, client, temperature }
     }
 }
 
@@ -38,17 +49,18 @@ impl ModelProvider for OpenAICompatProvider {
         max_tokens: u32,
     ) -> Result<ModelResponse> {
         let url = format!("{}/chat/completions", self.base_url);
-        let msgs: Vec<Value> = messages
-            .iter()
-            .map(|m| json!({ "role": m.role, "content": m.content }))
-            .collect();
+        let msgs: Vec<Value> = messages.iter().map(|m| message_to_value(m)).collect();
 
         let mut body = json!({
             "model": self.model,
             "messages": msgs,
             "max_tokens": max_tokens,
-            "temperature": 0.7,
         });
+        // Reasoning/thinking models reject sampling params in some modes, so only
+        // emit temperature when a profile explicitly configured one.
+        if let Some(t) = self.temperature {
+            body["temperature"] = json!(t);
+        }
 
         if !tools.is_empty() {
             body["tools"] = json!(tools
@@ -69,32 +81,53 @@ impl ModelProvider for OpenAICompatProvider {
             req = req.bearer_auth(key);
         }
 
-        let resp = req.send().await?.error_for_status()?;
+        let resp = req.send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            // Surface the provider's actual error message (e.g. DeepSeek 422 body)
+            // instead of a generic "client error", so the UI can show the real cause.
+            let text = resp.text().await.unwrap_or_default();
+            return Err(AppError::Model(format!(
+                "模型请求失败 (HTTP {status}): {text}"
+            )));
+        }
+
         let v: Value = resp.json().await?;
         let choice = v
             .get("choices")
             .and_then(|c| c.get(0))
             .ok_or_else(|| AppError::Model("empty model response".into()))?;
 
-        let content = choice
-            .get("message")
+        let message = choice.get("message");
+        let content = message
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_str())
             .unwrap_or("")
             .to_string();
 
-        let tool_calls = choice
-            .get("message")
+        let reasoning_content = message
+            .and_then(|m| m.get("reasoning_content"))
+            .and_then(|c| c.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        let tool_calls = message
             .and_then(|m| m.get("tool_calls"))
             .and_then(|tc| tc.as_array())
             .map(|arr| {
                 arr.iter()
                     .filter_map(|c| {
                         let f = c.get("function")?;
+                        let raw_args = f.get("arguments")?.as_str().unwrap_or("");
+                        let arguments = if raw_args.trim().is_empty() {
+                            serde_json::json!({})
+                        } else {
+                            serde_json::from_str::<Value>(raw_args).unwrap_or(Value::Null)
+                        };
                         Some(ToolCall {
+                            id: c.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                             name: f.get("name")?.as_str()?.to_string(),
-                            arguments: serde_json::from_str(f.get("arguments")?.as_str()?)
-                                .unwrap_or(Value::Null),
+                            arguments,
                         })
                     })
                     .collect::<Vec<_>>()
@@ -106,7 +139,36 @@ impl ModelProvider for OpenAICompatProvider {
             .and_then(|f| f.as_str())
             .unwrap_or("stop")
             .to_string();
-
-        Ok(ModelResponse { content, tool_calls, finish_reason })
+        Ok(ModelResponse { content, tool_calls, finish_reason, reasoning_content })
     }
 }
+
+
+
+fn message_to_value(m: &ChatMessage) -> Value {
+    let mut obj = json!({ "role": m.role, "content": m.content });
+    if let Some(tc) = &m.tool_calls {
+        obj["tool_calls"] = json!(tc
+            .iter()
+            .map(|c| json!({
+                "id": c.id,
+                "type": "function",
+                "function": {
+                    "name": c.name,
+                    "arguments": match &c.arguments {
+                        Value::String(s) => s.clone(),
+                        other => serde_json::to_string(other).unwrap_or_else(|_| "{}".into()),
+                    }
+                }
+            }))
+            .collect::<Vec<_>>());
+    }
+    if let Some(id) = &m.tool_call_id {
+        obj["tool_call_id"] = json!(id);
+    }
+    if let Some(rc) = &m.reasoning_content {
+        obj["reasoning_content"] = json!(rc);
+    }
+    obj
+}
+

@@ -202,6 +202,7 @@ impl Core {
                 &[crate::models::ChatMessage {
                     role: "user".into(),
                     content: prompt_text.to_string(),
+                    ..Default::default()
                 }],
                 &[],
                 128,
@@ -565,3 +566,4 @@ fn load_model_profiles(db: &Db, registry: &ModelRegistry) -> Result<()> {
     registry.set_default(default);
     Ok(())
 }
+

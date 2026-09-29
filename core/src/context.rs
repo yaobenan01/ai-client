@@ -27,10 +27,10 @@ mod tests {
     #[test]
     fn trims_history_keeps_system() {
         let msgs = vec![
-            ChatMessage { role: "system".into(), content: "s".into() },
-            ChatMessage { role: "user".into(), content: "1".into() },
-            ChatMessage { role: "user".into(), content: "2".into() },
-            ChatMessage { role: "user".into(), content: "3".into() },
+            ChatMessage { role: "system".into(), content: "s".into(), ..Default::default() },
+            ChatMessage { role: "user".into(), content: "1".into(), ..Default::default() },
+            ChatMessage { role: "user".into(), content: "2".into(), ..Default::default() },
+            ChatMessage { role: "user".into(), content: "3".into(), ..Default::default() },
         ];
         let t = trim_history(msgs, 2);
         assert_eq!(t.len(), 3); // system + last 2 user messages
@@ -44,3 +44,4 @@ mod tests {
         assert!(estimate_tokens("你好，世界") >= 2);
     }
 }
+
