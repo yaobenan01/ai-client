@@ -1,4 +1,4 @@
-﻿﻿# 安装本地 Rust + C 工具链（一次性，便于编译 core/desktop）
+﻿# 安装本地 Rust + C 工具链（一次性，便于编译 core/desktop）
 $ErrorActionPreference = "Stop"
 
 function Has-Cmd($name) { [bool](Get-Command $name -ErrorAction SilentlyContinue) }

@@ -1,4 +1,4 @@
-﻿﻿﻿# 准备 ppt-master：拉取官方主线 + 用内嵌 Python 安装依赖（构建期在开发机执行）
+﻿# 准备 ppt-master：拉取官方主线 + 用内嵌 Python 安装依赖（构建期在开发机执行）
 param(
   [string]$Python = ""
 )

@@ -1,4 +1,4 @@
-﻿﻿# 开发模式：启动 headless 核心 + 前端 dev server
+﻿# 开发模式：启动 headless 核心 + 前端 dev server
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
