@@ -1,9 +1,5 @@
-# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
+﻿﻿﻿# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
 # 目标机器无需安装 Python / FFmpeg / LibreOffice / 模型。
-$ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$side = "$root\sidecars"
-
 param(
   [switch]$LlamaCpp,
   [switch]$Ffmpeg,
@@ -13,74 +9,175 @@ param(
   [switch]$PythonStandalone,
   [switch]$All
 )
-if ($All) { $LlamaCpp=$true; $Ffmpeg=$true; $LibreOffice=$true; $Piper=$true; $CosyVoice=$true; $PythonStandalone=$true }
 
-function Fetch($url, $dest) {
-  $dir = Split-Path -Parent $dest
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  Write-Host "==> 下载 $url" -ForegroundColor Cyan
-  $ProgressPreference = 'SilentlyContinue'
-  Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot
+$side = "$root\sidecars"
+
+if ($All) {
+  $LlamaCpp = $true
+  $Ffmpeg = $true
+  $LibreOffice = $true
+  $Piper = $true
+  $CosyVoice = $true
+  $PythonStandalone = $true
 }
 
-# llama.cpp llama-server
+function FetchWithFallback($urls, $dest) {
+  $dir = Split-Path -Parent $dest
+  if (-not (Test-Path $dir)) {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  $ProgressPreference = 'SilentlyContinue'
+  foreach ($url in $urls) {
+    try {
+      Write-Host "==> 下载 $url" -ForegroundColor Cyan
+      Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+      if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 1000)) {
+        Write-Host "==> 下载成功: $url ($([math]::Round((Get-Item $dest).Length / 1MB, 2)) MB)" -ForegroundColor Green
+        return
+      }
+    } catch {
+      Write-Warning "从 $url 下载失败: $_"
+    }
+  }
+  throw "未能从任何镜像源下载成功: $($urls -join ', ')"
+}
+
+function Fetch($url, $dest) {
+  FetchWithFallback @($url) $dest
+}
+
+# 1) llama.cpp llama-server
 if ($LlamaCpp) {
   $targetExe = "$side\llama.cpp\llama-server.exe"
   if (-not (Test-Path $targetExe)) {
+    Write-Host "==> 准备 llama-server..." -ForegroundColor Cyan
     $zip = "$env:TEMP\llama.zip"
     Fetch "https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip" $zip
     $targetDir = "$side\llama.cpp"
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-    tar -xf $zip -C $targetDir "llama-server.exe" "*.dll"
+    tar -xf $zip -C $targetDir
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+  } else {
+    Write-Host "llama-server 已存在，跳过拉取。" -ForegroundColor Green
   }
 }
 
-# FFmpeg 静态构建（Windows 示例；Linux/macOS 请用对应构建）
+# 2) FFmpeg 静态构建（包含 ffmpeg.exe 与 ffprobe.exe）
 if ($Ffmpeg) {
-  $zip = "$env:TEMP\ffmpeg-release-essentials.zip"
-  Fetch "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" $zip
-  $destBin = "$side\media\ffmpeg\bin"
-  $destRoot = "$side\media\ffmpeg"
-  New-Item -ItemType Directory -Force -Path $destBin | Out-Null
-  tar -xf $zip --strip-components 2 -C $destBin "*/bin/ffmpeg.exe" "*/bin/ffprobe.exe"
-  Copy-Item "$destBin\ffmpeg.exe" "$destRoot\" -Force
-  Copy-Item "$destBin\ffprobe.exe" "$destRoot\" -Force
-}
-
-# LibreOffice（Windows 示例：自动拉取并解包为自包含绿色渲染器）
-if ($LibreOffice) {
-  $msi = "$env:TEMP\libreoffice.msi"
-  Fetch "https://mirrors.ustc.edu.cn/tdf/libreoffice/stable/26.8.0/win/x86_64/LibreOffice_26.8.0_Win_x86-64.msi" $msi
-  $target = "$env:TEMP\lo_unpack"
-  if (Test-Path $target) { Remove-Item -Recurse -Force $target }
-  Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$target`"" -Wait
-  $loRoot = "$side\media\libreoffice"
-  New-Item -ItemType Directory -Force -Path $loRoot | Out-Null
-  $found = Get-ChildItem -Path $target -Filter "soffice.exe" -Recurse | Select-Object -First 1
-  if ($found) {
-    Copy-Item "$($found.Directory.Parent.FullName)\*" $loRoot -Recurse -Force
+  $destExe = "$side\media\ffmpeg\bin\ffmpeg.exe"
+  if (-not (Test-Path $destExe) -and -not (Test-Path "$side\media\ffmpeg\ffmpeg.exe")) {
+    Write-Host "==> 准备 FFmpeg..." -ForegroundColor Cyan
+    $zip = "$env:TEMP\ffmpeg-release-essentials.zip"
+    Fetch "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" $zip
+    $tempExtract = "$env:TEMP\ffmpeg_unpack"
+    if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
+    New-Item -ItemType Directory -Force -Path $tempExtract | Out-Null
+    
+    tar -xf $zip -C $tempExtract
+    
+    $destBin = "$side\media\ffmpeg\bin"
+    $destRoot = "$side\media\ffmpeg"
+    New-Item -ItemType Directory -Force -Path $destBin | Out-Null
+    
+    $ffExe = Get-ChildItem -Path $tempExtract -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+    $fpExe = Get-ChildItem -Path $tempExtract -Filter "ffprobe.exe" -Recurse | Select-Object -First 1
+    if ($ffExe) {
+      Copy-Item $ffExe.FullName "$destBin\ffmpeg.exe" -Force
+      Copy-Item $ffExe.FullName "$destRoot\ffmpeg.exe" -Force
+    }
+    if ($fpExe) {
+      Copy-Item $fpExe.FullName "$destBin\ffprobe.exe" -Force
+      Copy-Item $fpExe.FullName "$destRoot\ffprobe.exe" -Force
+    }
+    Remove-Item -Recurse -Force $tempExtract -ErrorAction SilentlyContinue
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+  } else {
+    Write-Host "FFmpeg 已存在，跳过拉取。" -ForegroundColor Green
   }
-  Remove-Item -Recurse -Force $target
 }
 
-# Piper TTS（Windows 示例：piper_windows_amd64.zip + 中文模型）
+# 3) LibreOffice（自动拉取并解包为自包含绿色渲染器，清理语言包体积）
+if ($LibreOffice) {
+  $sofficeExe = "$side\media\libreoffice\program\soffice.exe"
+  if (-not (Test-Path $sofficeExe)) {
+    Write-Host "==> 准备 LibreOffice..." -ForegroundColor Cyan
+    $msi = "$env:TEMP\libreoffice.msi"
+    $loUrls = @(
+      "https://download.documentfoundation.org/libreoffice/stable/26.8.0/win/x86_64/LibreOffice_26.8.0_Win_x86-64.msi",
+      "https://mirrors.ustc.edu.cn/tdf/libreoffice/stable/26.8.0/win/x86_64/LibreOffice_26.8.0_Win_x86-64.msi"
+    )
+    FetchWithFallback $loUrls $msi
+    $target = "$env:TEMP\lo_unpack"
+    if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+    Write-Host "==> 解包 LibreOffice MSI 提取绿色文件..." -ForegroundColor Cyan
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$target`"" -Wait
+    $loRoot = "$side\media\libreoffice"
+    New-Item -ItemType Directory -Force -Path $loRoot | Out-Null
+    $found = Get-ChildItem -Path $target -Filter "soffice.exe" -Recurse | Select-Object -First 1
+    if ($found) {
+      Copy-Item "$($found.Directory.Parent.FullName)\*" $loRoot -Recurse -Force
+      # 清理多余语言包，减小最终安装包体积
+      if (Test-Path "$loRoot\share\extensions") {
+        Get-ChildItem "$loRoot\share\extensions" -Exclude "*dict-en*", "*dict-zh*" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+      }
+    } else {
+      throw "解包 LibreOffice 失败：未找到 soffice.exe"
+    }
+    Remove-Item -Recurse -Force $target -ErrorAction SilentlyContinue
+    Remove-Item $msi -Force -ErrorAction SilentlyContinue
+  } else {
+    Write-Host "LibreOffice 已存在，跳过拉取。" -ForegroundColor Green
+  }
+}
+
+# 4) Piper TTS（Windows：piper.exe + 基础中文语音模型）
 if ($Piper) {
-  Fetch "https://github.com/rhasspy/piper/releases/latest/download/piper_windows_amd64.zip" "$env:TEMP\piper.zip"
-  Expand-Archive "$env:TEMP\piper.zip" "$side\tts\piper" -Force
-  Fetch "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx" "$side\tts\models\zh_CN-huayan-medium.onnx"
+  $piperExe = "$side\tts\piper\piper.exe"
+  if (-not (Test-Path $piperExe)) {
+    Write-Host "==> 准备 Piper TTS..." -ForegroundColor Cyan
+    Fetch "https://github.com/rhasspy/piper/releases/latest/download/piper_windows_amd64.zip" "$env:TEMP\piper.zip"
+    Expand-Archive "$env:TEMP\piper.zip" "$side\tts\piper" -Force
+    Remove-Item "$env:TEMP\piper.zip" -Force -ErrorAction SilentlyContinue
+  } else {
+    Write-Host "Piper TTS 已存在，跳过拉取。" -ForegroundColor Green
+  }
+  $modelDest = "$side\tts\models\zh_CN-huayan-medium.onnx"
+  if (-not (Test-Path $modelDest)) {
+    try {
+      Write-Host "==> 准备 Piper 中文模型..." -ForegroundColor Cyan
+      Fetch "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx" $modelDest
+    } catch {
+      Write-Warning "下载 Piper 模型失败 (可稍后手动下载): $_"
+    }
+  }
 }
 
-# Python standalone（免安装，CPython 3.10 + 依赖预置）
+# 5) Python standalone（免安装，CPython 3.10 + 依赖预置）
 if ($PythonStandalone) {
-  $pyTar = "$env:TEMP\python-standalone.tar.gz"
-  Fetch "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.10.21%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz" $pyTar
-  $dest = "$side\python\runtime"
-  New-Item -ItemType Directory -Force -Path $dest | Out-Null
-  tar -xzf $pyTar -C $dest --strip-components 1
-  & "$dest\python.exe" -m pip install -r "$root\plugins\ppt-master\requirements.txt"
+  $pythonExe = "$side\python\runtime\python.exe"
+  if (-not (Test-Path $pythonExe)) {
+    Write-Host "==> 准备 Python 独立免安装运行时..." -ForegroundColor Cyan
+    $pyTar = "$env:TEMP\python-standalone.tar.gz"
+    Fetch "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.10.21%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz" $pyTar
+    $dest = "$side\python\runtime"
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    tar -xzf $pyTar -C $dest --strip-components 1
+    Remove-Item $pyTar -Force -ErrorAction SilentlyContinue
+    
+    # 预装依赖
+    Write-Host "==> 预装 ppt-master Python 依赖..." -ForegroundColor Cyan
+    & "$dest\python.exe" -m pip install --upgrade pip
+    if (Test-Path "$root\plugins\ppt-master\requirements.txt") {
+      & "$dest\python.exe" -m pip install -r "$root\plugins\ppt-master\requirements.txt"
+    }
+  } else {
+    Write-Host "Python 已存在，跳过拉取。" -ForegroundColor Green
+  }
 }
 
-# CosyVoice（模型 + 源码，体积较大）
+# 6) CosyVoice（模型 + 源码，体积较大）
 if ($CosyVoice) {
   Write-Host "CosyVoice：git clone https://github.com/FunAudioLLM/CosyVoice.git 并下载 CosyVoice2-0.5B 模型" -ForegroundColor Yellow
 }

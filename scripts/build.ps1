@@ -1,6 +1,12 @@
-# 构建 web + core（release）
+﻿# 构建 web + core（release）
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+
+# 确保 cargo 在 PATH 中
+$cargoBin = "$env:USERPROFILE\.cargo\bin"
+if ((Test-Path $cargoBin) -and ($env:PATH -notlike "*$cargoBin*")) {
+    $env:PATH = "$cargoBin;$env:PATH"
+}
 
 Write-Host "==> 构建前端" -ForegroundColor Cyan
 Push-Location "$root\web"

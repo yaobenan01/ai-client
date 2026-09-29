@@ -1,14 +1,17 @@
-# 准备 ppt-master：拉取官方主线 + 用内嵌 Python 安装依赖（构建期在开发机执行）
-$ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$plugin = "$root\plugins\ppt-master"
-
+﻿﻿﻿# 准备 ppt-master：拉取官方主线 + 用内嵌 Python 安装依赖（构建期在开发机执行）
 param(
   [string]$Python = ""
 )
 
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot
+$plugin = "$root\plugins\ppt-master"
+
 if (-not $Python) {
   $Python = $env:AI_CLIENT_PYTHON
+}
+if (-not $Python -and (Test-Path "$root\sidecars\python\runtime\python.exe")) {
+  $Python = "$root\sidecars\python\runtime\python.exe"
 }
 if (-not $Python) {
   $Python = "python"

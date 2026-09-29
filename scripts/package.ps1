@@ -1,7 +1,13 @@
-# 本地一键打包桌面应用（CI 不可用时的备用路径）
+﻿# 本地一键打包桌面应用（CI 不可用时的备用路径）
 # 前置：已安装 Rust 工具链（cargo/rustc）、Node + pnpm
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+
+# 确保 cargo / rustc 在 PATH 中
+$cargoBin = "$env:USERPROFILE\.cargo\bin"
+if ((Test-Path $cargoBin) -and ($env:PATH -notlike "*$cargoBin*")) {
+    $env:PATH = "$cargoBin;$env:PATH"
+}
 
 # 1) 目标三元组 —— Tauri v2 的 externalBin 要求文件名带 triple 后缀
 $hostLine = (& rustc -vV | Select-String '^host:\s*(.+)$')
@@ -51,4 +57,3 @@ Pop-Location
 
 Write-Host "完成。安装包位于 desktop/src-tauri/target/release/bundle/" -ForegroundColor Green
 Write-Host "安装包已完整内置 Python、FFmpeg、LibreOffice 及模型运行环境，支持目标机器离线开箱即用。" -ForegroundColor Cyan
-
