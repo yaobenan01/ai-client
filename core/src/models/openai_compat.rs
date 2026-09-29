@@ -116,7 +116,8 @@ impl ModelProvider for OpenAICompatProvider {
             .and_then(|tc| tc.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|c| {
+                    .enumerate()
+                    .filter_map(|(idx, c)| {
                         let f = c.get("function")?;
                         let raw_args = f.get("arguments")?.as_str().unwrap_or("");
                         let arguments = if raw_args.trim().is_empty() {
@@ -124,8 +125,16 @@ impl ModelProvider for OpenAICompatProvider {
                         } else {
                             serde_json::from_str::<Value>(raw_args).unwrap_or(Value::Null)
                         };
+                        // 有些本地模型（llama.cpp）不返回 id；空 tool_call_id 会被
+                        // 服务端判为非法，这里合成一个稳定 id 保证成对出现。
+                        let id = c
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| format!("call_{idx}"));
                         Some(ToolCall {
-                            id: c.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            id,
                             name: f.get("name")?.as_str()?.to_string(),
                             arguments,
                         })

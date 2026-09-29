@@ -84,6 +84,8 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub max_iterations: usize,
     pub max_tokens: u32,
+    /// 每次请求携带的最近消息条数（工具调用会成组保留，实际可能略多）。
+    pub max_messages: usize,
     pub allow_commands: bool,
 }
 
@@ -93,6 +95,7 @@ impl Default for AgentConfig {
             system_prompt: "你是一个离线 AI 智能体，请使用可用工具完成任务，最终用中文给出结论。".into(),
             max_iterations: 24,
             max_tokens: 2048,
+            max_messages: 32,
             allow_commands: true,
         }
     }
@@ -141,7 +144,7 @@ impl Agent {
 
         for step in 0..self.config.max_iterations {
             // Context Management: trim history to respect sliding window token budget
-            let trimmed_messages = crate::context::trim_history(messages.clone(), 16);
+            let trimmed_messages = crate::context::trim_history(messages.clone(), self.config.max_messages);
 
             let resp = self.provider.chat(&trimmed_messages, &specs, self.config.max_tokens).await?;
             final_answer = resp.content.clone();
