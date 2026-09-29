@@ -35,3 +35,10 @@ installers/
 *.gguf
 artifacts/
 
+# 本地构建期准备的庞大内置运行时（数百 MB ~ GB，绝不入库）
+sidecars/media/ffmpeg/
+sidecars/media/libreoffice/
+sidecars/media/piper/
+sidecars/tts/piper/
+# 本地临时产物/试验输出
+scratch/
