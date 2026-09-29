@@ -164,11 +164,17 @@ fn discover_llama_server(app: &tauri::App) -> Option<PathBuf> {
 
 /// 定位随包分发的 Python 运行时（免用户自行安装 Python 的关键）。
 fn discover_python(app: &tauri::App) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("AI_CLIENT_PYTHON") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
     let bases = resource_bases(app);
     let names: &[&str] = if cfg!(windows) {
-        &["python.exe"]
+        &["python.exe", "venv/Scripts/python.exe"]
     } else {
-        &["bin/python3", "python3", "bin/python"]
+        &["bin/python3", "python3", "bin/python", "venv/bin/python3", "venv/bin/python"]
     };
     let mut candidates: Vec<PathBuf> = Vec::new();
     for base in &bases {
@@ -188,11 +194,80 @@ fn discover_python(app: &tauri::App) -> Option<PathBuf> {
                         .join("runtime")
                         .join(&rel),
                 );
+                candidates.push(base.join(&prefix).join("sidecars").join("python").join(&rel));
             }
         }
     }
     first_existing(candidates)
 }
+
+/// 定位随包分发或系统的 LibreOffice 渲染器。
+fn discover_libreoffice(app: &tauri::App) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("AI_CLIENT_LIBREOFFICE") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let bases = resource_bases(app);
+    let names: &[&str] = if cfg!(windows) {
+        &["program/soffice.exe", "program/soffice.com", "soffice.exe"]
+    } else {
+        &["soffice", "libreoffice"]
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for base in &bases {
+        for name in names {
+            let rel = PathBuf::from(name);
+            for prefix in [
+                PathBuf::new(),
+                PathBuf::from("_up_").join("_up_"),
+                PathBuf::from("resources"),
+            ] {
+                candidates.push(base.join(&prefix).join("sidecars").join("media").join("libreoffice").join(&rel));
+                candidates.push(base.join(&prefix).join("media").join("libreoffice").join(&rel));
+            }
+        }
+    }
+    if cfg!(windows) {
+        candidates.push(PathBuf::from("C:\\Program Files\\LibreOffice\\program\\soffice.exe"));
+        candidates.push(PathBuf::from("C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe"));
+        candidates.push(PathBuf::from("D:\\Program Files\\LibreOffice\\program\\soffice.exe"));
+    }
+    first_existing(candidates)
+}
+
+/// 定位随包分发或系统的 FFmpeg 合成器。
+fn discover_ffmpeg(app: &tauri::App) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("AI_CLIENT_FFMPEG") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let bases = resource_bases(app);
+    let names: &[&str] = if cfg!(windows) {
+        &["bin/ffmpeg.exe", "ffmpeg.exe"]
+    } else {
+        &["bin/ffmpeg", "ffmpeg"]
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for base in &bases {
+        for name in names {
+            let rel = PathBuf::from(name);
+            for prefix in [
+                PathBuf::new(),
+                PathBuf::from("_up_").join("_up_"),
+                PathBuf::from("resources"),
+            ] {
+                candidates.push(base.join(&prefix).join("sidecars").join("media").join("ffmpeg").join(&rel));
+                candidates.push(base.join(&prefix).join("media").join("ffmpeg").join(&rel));
+            }
+        }
+    }
+    first_existing(candidates)
+}
+
 /// 定位 core 可执行文件；务必排除桌面壳自身，避免自启动递归。
 fn find_core_binary() -> Option<PathBuf> {
     let exe = if cfg!(windows) { "ai-client.exe" } else { "ai-client" };
@@ -266,6 +341,12 @@ fn spawn_core(app: &tauri::App, child_slot: Arc<Mutex<Option<Child>>>) {
     }
     if let Some(py) = discover_python(app) {
         cmd.env("AI_CLIENT_PYTHON", &py);
+    }
+    if let Some(lo) = discover_libreoffice(app) {
+        cmd.env("AI_CLIENT_LIBREOFFICE", &lo);
+    }
+    if let Some(ff) = discover_ffmpeg(app) {
+        cmd.env("AI_CLIENT_FFMPEG", &ff);
     }
 
     let mut logged = false;

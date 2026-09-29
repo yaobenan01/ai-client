@@ -31,13 +31,30 @@ if ($LlamaCpp) {
 
 # FFmpeg 静态构建（Windows 示例；Linux/macOS 请用对应构建）
 if ($Ffmpeg) {
-  Fetch "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" "$env:TEMP\ffmpeg.zip"
-  Expand-Archive "$env:TEMP\ffmpeg.zip" "$side\media\ffmpeg" -Force
+  $zip = "$env:TEMP\ffmpeg-release-essentials.zip"
+  Fetch "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" $zip
+  $destBin = "$side\media\ffmpeg\bin"
+  $destRoot = "$side\media\ffmpeg"
+  New-Item -ItemType Directory -Force -Path $destBin | Out-Null
+  tar -xf $zip --strip-components 2 -C $destBin "*/bin/ffmpeg.exe" "*/bin/ffprobe.exe"
+  Copy-Item "$destBin\ffmpeg.exe" "$destRoot\" -Force
+  Copy-Item "$destBin\ffprobe.exe" "$destRoot\" -Force
 }
 
-# LibreOffice portable（Windows 示例）
+# LibreOffice（Windows 示例：自动拉取并解包为自包含绿色渲染器）
 if ($LibreOffice) {
-  Write-Host "LibreOffice：请下载 Portable 版本解压到 sidecars/media/libreoffice/" -ForegroundColor Yellow
+  $msi = "$env:TEMP\libreoffice.msi"
+  Fetch "https://mirrors.ustc.edu.cn/tdf/libreoffice/stable/26.8.0/win/x86_64/LibreOffice_26.8.0_Win_x86-64.msi" $msi
+  $target = "$env:TEMP\lo_unpack"
+  if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+  Start-Process -FilePath "msiexec.exe" -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$target`"" -Wait
+  $loRoot = "$side\media\libreoffice"
+  New-Item -ItemType Directory -Force -Path $loRoot | Out-Null
+  $found = Get-ChildItem -Path $target -Filter "soffice.exe" -Recurse | Select-Object -First 1
+  if ($found) {
+    Copy-Item "$($found.Directory.Parent.FullName)\*" $loRoot -Recurse -Force
+  }
+  Remove-Item -Recurse -Force $target
 }
 
 # Piper TTS（Windows 示例：piper_windows_amd64.zip + 中文模型）
@@ -47,9 +64,14 @@ if ($Piper) {
   Fetch "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx" "$side\tts\models\zh_CN-huayan-medium.onnx"
 }
 
-# Python standalone（免安装，跨平台）
+# Python standalone（免安装，CPython 3.10 + 依赖预置）
 if ($PythonStandalone) {
-  Write-Host "python-build-standalone：请按平台下载并解压到 sidecars/python/runtime/" -ForegroundColor Yellow
+  $pyTar = "$env:TEMP\python-standalone.tar.gz"
+  Fetch "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.10.21%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz" $pyTar
+  $dest = "$side\python\runtime"
+  New-Item -ItemType Directory -Force -Path $dest | Out-Null
+  tar -xzf $pyTar -C $dest --strip-components 1
+  & "$dest\python.exe" -m pip install -r "$root\plugins\ppt-master\requirements.txt"
 }
 
 # CosyVoice（模型 + 源码，体积较大）
