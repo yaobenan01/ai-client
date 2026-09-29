@@ -3,8 +3,19 @@ name: build
 on:
   push:
     branches: [main]
+    # 纯文档改动不触发构建，节省 Actions 分钟
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
   pull_request:
   workflow_dispatch:
+    inputs:
+      full_matrix:
+        description: '包含 macOS 全部目标（macOS 分钟按 10 倍计费，谨慎开启）'
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,6 +23,8 @@ env:
 jobs:
   build-core:
     name: core (${{ matrix.target }})
+    # macOS runner 按 10 倍分钟计费：默认跳过，需要时用 workflow_dispatch 勾选 full_matrix
+    if: ${{ !startsWith(matrix.os, 'macos') || inputs.full_matrix }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,6 +94,7 @@ jobs:
   build-desktop:
     name: desktop (${{ matrix.target }})
     needs: [build-core]
+    if: ${{ !startsWith(matrix.os, 'macos') || inputs.full_matrix }}
     strategy:
       fail-fast: false
       matrix:
