@@ -8,6 +8,16 @@ use std::sync::Arc;
 #[derive(Parser)]
 #[command(name = "ai-client", version, about = "离线 AI 智能体核心引擎（headless）")]
 struct Cli {
+    /// 数据目录（数据库/模型/插件/工作区）
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+    /// 监听地址
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+    /// 监听端口
+    #[arg(long, default_value_t = 8787)]
+    port: u16,
+
     #[command(subcommand)]
     command: Option<Cmd>,
 }
@@ -56,15 +66,15 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let args = match cli.command {
-        Some(Cmd::Serve(a)) => a,
-        None => ServeArgs { data_dir: None, host: "127.0.0.1".into(), port: 8787 },
+    let (data_dir_opt, host, port) = match cli.command {
+        Some(Cmd::Serve(a)) => (a.data_dir.or(cli.data_dir), a.host, a.port),
+        None => (cli.data_dir, cli.host, cli.port),
     };
 
-    let data_dir = args.data_dir.unwrap_or_else(default_data_dir);
+    let data_dir = data_dir_opt.unwrap_or_else(default_data_dir);
     let mut config = AppConfig::at(data_dir)?;
-    config.server.host = args.host;
-    config.server.port = args.port;
+    config.server.host = host;
+    config.server.port = port;
 
     let core = Arc::new(Core::init(config)?);
     let app = server::router(core.clone());

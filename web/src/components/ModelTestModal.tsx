@@ -78,7 +78,14 @@ export default function ModelTestModal({ model, onClose }: ModelTestModalProps) 
         {err && (
           <div className="test-error-box">
             <strong>❌ 连接异常</strong>
-            <p>{err}</p>
+            <p style={{ margin: '4px 0 8px' }}>{err}</p>
+            {(err.includes('llama-server') || err.includes('program not found')) && (
+              <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(239, 68, 68, 0.08)', borderRadius: 6, fontSize: 12, lineHeight: 1.6 }}>
+                <div><strong>💡 诊断排查建议：</strong></div>
+                <div>1. 纯本地 GGUF 模型需由 <code>llama-server.exe</code> 加载。已自动下载至 <code>sidecars/llama.cpp/</code> 与 AppData。</div>
+                <div>2. 若已有运行中的 Ollama (端口 11434)、LM Studio (1234) 或 vLLM，可在「大模型」中添加为 <strong>OpenAI 兼容端点</strong>，无需重复拉起子进程。</div>
+              </div>
+            )}
           </div>
         )}
 

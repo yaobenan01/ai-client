@@ -16,6 +16,10 @@ __pycache__/
 sidecars/python/runtime/
 sidecars/tts/models/
 sidecars/media/bin/
+sidecars/llama.cpp/*.exe
+sidecars/llama.cpp/*.dll
+*.gguf
+*.zip
 
 # ppt-master checkout
 plugins/ppt-master/src/

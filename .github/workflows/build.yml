@@ -132,6 +132,16 @@ jobs:
           fi
           echo "Staged binaries:"
           ls -la desktop/src-tauri/binaries/
+      - name: Fetch llama-server sidecar (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p sidecars/llama.cpp
+          curl -sL "https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip" -o /tmp/llama.zip || true
+          if [ -f /tmp/llama.zip ]; then
+            unzip -o -q /tmp/llama.zip "llama-server.exe" "*.dll" -d sidecars/llama.cpp/ || true
+          fi
+          ls -la sidecars/llama.cpp/ || true
       - name: Install web deps
         run: pnpm install --dir web
       - name: Build web

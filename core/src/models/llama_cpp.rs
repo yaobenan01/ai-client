@@ -35,7 +35,18 @@ impl LlamaServerManager {
     }
 
     pub fn is_available(&self) -> bool {
-        self.server_bin.is_file()
+        if self.server_bin.is_file() {
+            return true;
+        }
+        if let Ok(path) = std::env::var("PATH") {
+            let exe = &self.server_bin;
+            for p in std::env::split_paths(&path) {
+                if p.join(exe).is_file() {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Ensure a llama-server is running for `model_path` and return its base URL.
@@ -43,6 +54,13 @@ impl LlamaServerManager {
         let key = model_path.to_string();
         if let Some(url) = self.existing_url(&key) {
             return Ok(url);
+        }
+
+        if !self.is_available() {
+            return Err(AppError::Model(format!(
+                "未找到 llama-server 执行程序（当前指向: {}）。请将 llama-server.exe 放入程序目录或设置环境变量 AI_CLIENT_LLAMA_SERVER；若已启动外部模型服务，可直接添加为「OpenAI 兼容端点」",
+                self.server_bin.display()
+            )));
         }
 
         let port = self.next_port.fetch_add(1, Ordering::SeqCst);
@@ -59,7 +77,16 @@ impl LlamaServerManager {
             .arg("0")
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| AppError::Model(format!("启动 llama-server 失败: {e}")))?;
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    AppError::Model(format!(
+                        "未找到 llama-server 执行程序（{}）。请下载并将 llama-server.exe 放置于程序目录或配置 AI_CLIENT_LLAMA_SERVER",
+                        self.server_bin.display()
+                    ))
+                } else {
+                    AppError::Model(format!("启动 llama-server 失败: {e}"))
+                }
+            })?;
 
         let base_url = format!("http://127.0.0.1:{port}/v1");
         wait_ready(&base_url).await?;

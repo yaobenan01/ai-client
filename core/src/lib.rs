@@ -38,6 +38,53 @@ pub struct Core {
     pub llama: Arc<LlamaServerManager>,
 }
 
+fn detect_llama_server_bin(config: &AppConfig) -> PathBuf {
+    let exe = if cfg!(windows) { "llama-server.exe" } else { "llama-server" };
+
+    if let Some(p) = &config.llama_server_bin {
+        if p.is_file() {
+            return p.clone();
+        }
+    }
+    if let Some(p) = std::env::var_os("AI_CLIENT_LLAMA_SERVER") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return pb;
+        }
+    }
+    // 检查当前二进制同级或子目录（安装形态）
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let candidates = [
+                dir.join(exe),
+                dir.join("bin").join(exe),
+                dir.join("sidecars").join("llama.cpp").join(exe),
+                dir.join("_up_").join("_up_").join("sidecars").join("llama.cpp").join(exe),
+            ];
+            for c in candidates {
+                if c.is_file() {
+                    return c;
+                }
+            }
+        }
+    }
+    // 检查应用数据目录及开发源码目录
+    let data_candidates = [
+        config.data_dir.join("bin").join(exe),
+        config.data_dir.join(exe),
+        PathBuf::from("sidecars/llama.cpp").join(exe),
+        PathBuf::from("sidecars/llama.cpp/bin").join(exe),
+        PathBuf::from("../sidecars/llama.cpp").join(exe),
+    ];
+    for c in data_candidates {
+        if c.is_file() {
+            return c;
+        }
+    }
+
+    PathBuf::from(exe)
+}
+
 impl Core {
     /// Initialize the core: open DB, apply schema, load persisted state.
     pub fn init(config: AppConfig) -> Result<Self> {
@@ -55,11 +102,7 @@ impl Core {
         let tools = Arc::new(crate::tools::default_registry_with_ppt(ppt_arc));
         let plugins = PluginManager::new(config.plugins_dir.clone());
 
-        let llama_bin = config
-            .llama_server_bin
-            .clone()
-            .or_else(|| std::env::var_os("AI_CLIENT_LLAMA_SERVER").map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "llama-server.exe" } else { "llama-server" }));
+        let llama_bin = detect_llama_server_bin(&config);
         let llama = Arc::new(LlamaServerManager::new(llama_bin));
 
         Ok(Self { config, db, auth, models, tools, plugins, ppt, llama })
