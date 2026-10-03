@@ -42,3 +42,9 @@ sidecars/media/piper/
 sidecars/tts/piper/
 # 本地临时产物/试验输出
 scratch/
+
+# 密钥/凭据文件（仓库为 public，严防误提交泄露）
+sk-*.txt
+.env.*
+*.pem
+*.key
