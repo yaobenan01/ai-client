@@ -12,7 +12,9 @@ pub struct PptRuntimeConfig {
     pub ppt_master_dir: Option<PathBuf>,
     pub libreoffice_exe: Option<PathBuf>,
     pub ffmpeg_exe: Option<PathBuf>,
-    /// `piper` (lightweight) or `cosyvoice` (high-quality Chinese).
+    pub piper_exe: Option<PathBuf>,
+    pub piper_model: Option<PathBuf>,
+    /// `piper` (lightweight local), `cosyvoice`, or `auto`.
     pub tts_engine: String,
 }
 
@@ -23,7 +25,9 @@ impl Default for PptRuntimeConfig {
             ppt_master_dir: None,
             libreoffice_exe: None,
             ffmpeg_exe: None,
-            tts_engine: "cosyvoice".into(),
+            piper_exe: None,
+            piper_model: None,
+            tts_engine: "piper".into(),
         }
     }
 }
@@ -34,6 +38,8 @@ pub struct PptRuntime {
     pub ppt_master_dir: PathBuf,
     pub libreoffice_exe: Option<PathBuf>,
     pub ffmpeg_exe: Option<PathBuf>,
+    pub piper_exe: Option<PathBuf>,
+    pub piper_model: Option<PathBuf>,
     pub tts_engine: String,
 }
 
@@ -56,12 +62,20 @@ impl PptRuntime {
         let ffmpeg_exe = cfg
             .ffmpeg_exe
             .or_else(|| std::env::var_os("AI_CLIENT_FFMPEG").map(PathBuf::from));
+        let piper_exe = cfg
+            .piper_exe
+            .or_else(|| std::env::var_os("AI_CLIENT_PIPER").map(PathBuf::from));
+        let piper_model = cfg
+            .piper_model
+            .or_else(|| std::env::var_os("PIPER_MODEL").map(PathBuf::from));
 
         Ok(Self {
             python_exe,
             ppt_master_dir,
             libreoffice_exe,
             ffmpeg_exe,
+            piper_exe,
+            piper_model,
             tts_engine: cfg.tts_engine,
         })
     }
@@ -113,6 +127,12 @@ impl PptRuntime {
         if let Some(p) = &self.libreoffice_exe {
             cmd.env("AI_CLIENT_LIBREOFFICE", p);
         }
+        if let Some(p) = &self.piper_exe {
+            cmd.env("AI_CLIENT_PIPER", p);
+        }
+        if let Some(p) = &self.piper_model {
+            cmd.env("PIPER_MODEL", p);
+        }
         let status = cmd
             .status()
             .map_err(|e| AppError::Ppt(format!("无法启动视频渲染: {e}")))?;
@@ -134,4 +154,3 @@ fn newest_pptx(dir: &Path) -> Result<PathBuf> {
         .map(|e| e.path())
         .ok_or_else(|| AppError::Ppt("未找到生成的 .pptx 文件".into()))
 }
-

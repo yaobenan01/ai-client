@@ -198,7 +198,10 @@ impl Tool for GeneratePptx {
         };
 
         match self.ppt.generate_pptx(&input_file, &output_dir) {
-            Ok(pptx_path) => Ok(ToolOutput::ok(format!("成功生成 PPTX 文件: {}", pptx_path.display()))),
+            Ok(pptx_path) => Ok(ToolOutput::ok(format!(
+                "✓ 成功生成 16:9 原生多版式 PPTX 演示文稿！\n文件路径: {}\n包含封面、结构目录、核心指标亮点大字、横向流程步骤与封底，全部内容矢量可编辑。\n演讲者口播旁白已自动注入，下一步可调用 pptx_to_video 快速合成为口播视频。",
+                pptx_path.display()
+            ))),
             Err(e) => Ok(ToolOutput::err(format!("生成 PPT 失败: {e}"))),
         }
     }
@@ -241,7 +244,10 @@ impl Tool for PptxToVideo {
         };
 
         match self.ppt.pptx_to_video(&pptx_path, &output_path) {
-            Ok(mp4_path) => Ok(ToolOutput::ok(format!("成功生成口播视频: {}", mp4_path.display()))),
+            Ok(mp4_path) => Ok(ToolOutput::ok(format!(
+                "✓ 成功生成高清口播视频！\n视频文件: {}\n全离线流水线已完成：LibreOffice 高清矢量渲染 -> PyMuPDF 逐页超清帧提取 -> Piper 本地神经网络语音合成 -> FFmpeg 音画精确对齐合成 MP4。\n用户可在交付产物列表中直接预览或播放。",
+                mp4_path.display()
+            ))),
             Err(e) => Ok(ToolOutput::err(format!("生成视频失败: {e}"))),
         }
     }

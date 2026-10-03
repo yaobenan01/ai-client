@@ -310,6 +310,102 @@ fn detect_ffmpeg_exe(_config: &AppConfig) -> Option<PathBuf> {
     None
 }
 
+/// 定位 Piper 语音合成器（内置二进制或系统安装）：显式环境变量 > 内置 sidecar > 系统 PATH。
+fn detect_piper_exe(_config: &AppConfig) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("AI_CLIENT_PIPER") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let exes = if cfg!(windows) {
+        vec!["piper.exe", "piper/piper.exe"]
+    } else {
+        vec!["piper", "piper/piper"]
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let mut bases = vec![dir.to_path_buf()];
+            if let Some(parent) = dir.parent() {
+                bases.push(parent.to_path_buf());
+            }
+            for base in &bases {
+                for exe in &exes {
+                    candidates.push(base.join("_up_").join("_up_").join("sidecars").join("tts").join("piper").join(exe));
+                    candidates.push(base.join("resources").join("sidecars").join("tts").join("piper").join(exe));
+                    candidates.push(base.join("sidecars").join("tts").join("piper").join(exe));
+                }
+            }
+        }
+    }
+
+    for exe in &exes {
+        candidates.push(PathBuf::from("sidecars/tts/piper").join(exe));
+        candidates.push(PathBuf::from("../sidecars/tts/piper").join(exe));
+        candidates.push(PathBuf::from("../../sidecars/tts/piper").join(exe));
+        candidates.push(PathBuf::from("../../../sidecars/tts/piper").join(exe));
+    }
+
+    for c in &candidates {
+        if c.is_file() {
+            return Some(c.clone());
+        }
+    }
+
+    if let Ok(path) = std::env::var("PATH") {
+        let exe = if cfg!(windows) { "piper.exe" } else { "piper" };
+        for p in std::env::split_paths(&path) {
+            let c = p.join(exe);
+            if c.is_file() {
+                return Some(c);
+            }
+        }
+    }
+
+    None
+}
+
+/// 定位 Piper 中文语音模型权重：显式环境变量 > 内置 sidecar。
+fn detect_piper_model(_config: &AppConfig) -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("PIPER_MODEL") {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+    let model_name = "zh_CN-huayan-medium.onnx";
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let mut bases = vec![dir.to_path_buf()];
+            if let Some(parent) = dir.parent() {
+                bases.push(parent.to_path_buf());
+            }
+            for base in &bases {
+                candidates.push(base.join("_up_").join("_up_").join("sidecars").join("tts").join("models").join(model_name));
+                candidates.push(base.join("resources").join("sidecars").join("tts").join("models").join(model_name));
+                candidates.push(base.join("sidecars").join("tts").join("models").join(model_name));
+            }
+        }
+    }
+
+    candidates.push(PathBuf::from("sidecars/tts/models").join(model_name));
+    candidates.push(PathBuf::from("../sidecars/tts/models").join(model_name));
+    candidates.push(PathBuf::from("../../sidecars/tts/models").join(model_name));
+    candidates.push(PathBuf::from("../../../sidecars/tts/models").join(model_name));
+
+    for c in &candidates {
+        if c.is_file() {
+            return Some(c.clone());
+        }
+    }
+
+    None
+}
+
 impl Core {
     /// Initialize the core: open DB, apply schema, load persisted state.
     pub fn init(config: AppConfig) -> Result<Self> {
@@ -323,7 +419,9 @@ impl Core {
             ppt_master_dir: Some(detect_ppt_master_dir(&config)),
             libreoffice_exe: detect_libreoffice_exe(&config),
             ffmpeg_exe: detect_ffmpeg_exe(&config),
-            tts_engine: "cosyvoice".into(),
+            piper_exe: detect_piper_exe(&config),
+            piper_model: detect_piper_model(&config),
+            tts_engine: "piper".into(),
         })?;
         let ppt_arc = Arc::new(ppt.clone());
         let tools = Arc::new(crate::tools::default_registry_with_ppt(ppt_arc));
@@ -459,7 +557,9 @@ impl Core {
             "ppt_master": self.ppt.ppt_master_dir.join("run.py").exists(),
             "tts_engine": self.ppt.tts_engine,
             "libreoffice": self.ppt.libreoffice_exe.as_ref().map(|p| p.is_file()).unwrap_or(false),
-            "ffmpeg": self.ppt.ffmpeg_exe.as_ref().map(|p| p.is_file()).unwrap_or(false)
+            "ffmpeg": self.ppt.ffmpeg_exe.as_ref().map(|p| p.is_file()).unwrap_or(false),
+            "piper": self.ppt.piper_exe.as_ref().map(|p| p.is_file()).unwrap_or(false),
+            "piper_model": self.ppt.piper_model.as_ref().map(|p| p.is_file()).unwrap_or(false)
         })
     }
 
@@ -888,7 +988,23 @@ fn collect_workspace_artifacts(workspace: &Path) -> std::collections::HashSet<St
     set
 }
 
-const DEFAULT_SYSTEM_PROMPT: &str = "你是一个离线 AI 智能体。请使用可用工具完成任务，最终用中文给出清晰结论。";
+const DEFAULT_SYSTEM_PROMPT: &str = r#"你是一个强大、专业的离线 AI 智能体工作站。你的职责是充分调用本地可用工具与插件，高效完成用户的任务。
+
+【执行与规划准则】
+1. 步骤清晰透明：当执行多步骤任务（尤其是制作演示文稿、口播视频、文档整理等）时，请务必在思维分析或回复中明确说明当前所处阶段：
+   - [阶段 1/4] 分析需求、提炼大纲与页面架构设计
+   - [阶段 2/4] 调用 generate_pptx 生成 16:9 原生多版式 PPTX
+   - [阶段 3/4] 调用 pptx_to_video 渲染高清幻灯片并合成配音
+   - [阶段 4/4] 汇总交付物并输出结论说明
+2. 工具调用规范：
+   - 生成 PPT 时优先调用 generate_pptx，支持直接传入 content (Markdown 大纲) 或 input_path (现有文件)。
+   - 生成口播视频时调用 pptx_to_video，传入生成的 pptx_path。
+3. 最终交付结论（finish）：
+   - 请以结构化 Markdown 输出，包含：
+     - 🎯 任务达成概况
+     - 📑 演示文稿及视频规格（页数、视觉主题、口播时长等）
+     - 📦 交付物清单（列出具体路径）
+     - 💡 后续使用与编辑建议"#;
 
 fn load_model_profiles(db: &Db, registry: &ModelRegistry) -> Result<()> {
     let conn = db.conn();

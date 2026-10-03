@@ -1,4 +1,4 @@
-# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
+﻿# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
 # 目标机器无需安装 Python / FFmpeg / LibreOffice / 模型。
 param(
   [switch]$LlamaCpp,
@@ -130,24 +130,36 @@ if ($LibreOffice) {
   }
 }
 
-# 4) Piper TTS（Windows：piper.exe + 基础中文语音模型）
+# 4) Piper TTS（Windows：piper.exe + 基础中文语音模型与配置文件）
 if ($Piper) {
   $piperExe = "$side\tts\piper\piper.exe"
   if (-not (Test-Path $piperExe)) {
     Write-Host "==> 准备 Piper TTS..." -ForegroundColor Cyan
     Fetch "https://github.com/rhasspy/piper/releases/latest/download/piper_windows_amd64.zip" "$env:TEMP\piper.zip"
     Expand-Archive "$env:TEMP\piper.zip" "$side\tts\piper" -Force
+    if (Test-Path "$side\tts\piper\piper\piper.exe") {
+      Copy-Item "$side\tts\piper\piper\*" "$side\tts\piper\" -Recurse -Force
+    }
     Remove-Item "$env:TEMP\piper.zip" -Force -ErrorAction SilentlyContinue
   } else {
     Write-Host "Piper TTS 已存在，跳过拉取。" -ForegroundColor Green
   }
   $modelDest = "$side\tts\models\zh_CN-huayan-medium.onnx"
+  $jsonDest = "$side\tts\models\zh_CN-huayan-medium.onnx.json"
   if (-not (Test-Path $modelDest)) {
     try {
-      Write-Host "==> 准备 Piper 中文模型..." -ForegroundColor Cyan
+      Write-Host "==> 准备 Piper 中文模型权重..." -ForegroundColor Cyan
       Fetch "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx" $modelDest
     } catch {
-      Write-Warning "下载 Piper 模型失败 (可稍后手动下载): $_"
+      Write-Warning "下载 Piper 模型失败: $_"
+    }
+  }
+  if (-not (Test-Path $jsonDest)) {
+    try {
+      Write-Host "==> 准备 Piper 中文模型配置..." -ForegroundColor Cyan
+      Fetch "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json" $jsonDest
+    } catch {
+      Write-Warning "下载 Piper 模型配置失败: $_"
     }
   }
 }

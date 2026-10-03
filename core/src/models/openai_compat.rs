@@ -84,11 +84,17 @@ impl ModelProvider for OpenAICompatProvider {
         let resp = req.send().await?;
         let status = resp.status();
         if !status.is_success() {
-            // Surface the provider's actual error message (e.g. DeepSeek 422 body)
-            // instead of a generic "client error", so the UI can show the real cause.
             let text = resp.text().await.unwrap_or_default();
+            let code = status.as_u16();
+            let friendly_hint = match code {
+                402 => "【API 账户余额不足】: 您当前配置的在线大模型 API Key 额度已耗尽。请在「设置 - 模型配置」中充值您的 API Key，或切换为其他在线提供商/启用本地内置离线大模型 (llama-server)。",
+                401 => "【API 密钥未授权或无效】: 请检查「设置 - 模型配置」中的 API Key 是否填写正确或已过期。",
+                429 => "【请求触发限流或超额】: API 调用频率已达到上游提供商限制，请稍候重试或调高额度。",
+                500..=599 => "【模型上游服务器异常】: 服务商服务出现故障或超载，请稍候重试或切换备用模型。",
+                _ => "模型请求失败",
+            };
             return Err(AppError::Model(format!(
-                "模型请求失败 (HTTP {status}): {text}"
+                "{friendly_hint} (HTTP {status}): {text}"
             )));
         }
 
