@@ -1,11 +1,16 @@
 ---
 name: ppt-master
 description: >-
-  将 PDF / DOCX / Markdown / 文本材料生成原生可编辑 PPTX，并把 PPTX + 演讲者备注
-  渲染为带本地 TTS 旁白的 MP4 口播视频。使用 python-pptx 与 PyMuPDF、本地 CosyVoice/Piper、
-  LibreOffice 与 FFmpeg，全程离线。
+  将材料生成精美专业、精简聚焦、多版式原生 16:9 PPTX，并结合生动口播解说备注文案，
+  使用内置 LibreOffice、PyMuPDF、Piper 离线语音及 FFmpeg 渲染为高质量口播 MP4 视频，全程离线。
 ---
-# ppt-master（内置插件）
+# ppt-master（离线演示文稿与口播视频引擎）
 
-- 生成：`python run.py generate --input <材料> --out <目录>`
-- 视频：`python render_video.py --pptx <文件> --out <输出> --tts cosyvoice`
+## 演示排版准则（精炼、突出重点、高级感）
+- 单页限制：每页幻灯片严格控制在 3~4 个核心要点以内，严禁单页堆砌过多文字！
+- 重点突出：每个要点使用「核心亮点词: 精炼阐述」（例如：`- All-in-One 工作台: 对话、写作、绘图一站式完成`）。
+- 版式多样：引擎自适应支持 2x2 四宫格聚焦卡片、三列特色卡片、指标数据大字、横向流程步骤图及图文混排。
+- 绝无杂音：严禁输出 `--`、`---` 或纯符号分隔线。
+
+## 生动口播文案准则（拒绝照读 PPT）
+- 演讲者备注重在生动讲解：结合听众痛点与产品价值，用通顺口语深入浅出剖析背后的原因和收益，像专业汇报者面对面解说。
