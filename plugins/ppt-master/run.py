@@ -175,37 +175,62 @@ def clean_markdown_artifacts(text: str) -> str:
 def extract_point_parts(bullet: str) -> tuple[str, str]:
     """将一条要点智能拆解为 (标题/关键词, 阐述说明)。
 
-    例如：
-      'All-in-One 工作台: 对话、写作、翻译一站式完成' -> ('All-in-One 工作台', '对话、写作、翻译一站式完成')
-      '隐私优先 - 敏感数据本地处理' -> ('隐私优先', '敏感数据本地处理')
-      '安全合规'                                  -> ('安全合规', '')
+    设计原则：
+      - 该简介简介：大字重点词精炼醒目（4~10字），大字展示；
+      - 该详细的详细：正文阐释充分清晰（介绍清楚，把机制和收益讲透，绝不丢失关键信息）。
     """
-    clean = clean_markdown_artifacts(bullet)
+    raw = bullet.strip()
+    if not raw:
+        return "", ""
+
+    # 1) 优先识别 Markdown 加粗重点词（如 **核心定位**: 详细说明 或 **极致安全** 详细说明）
+    m_bold = re.match(r"^[\s\-*•]*\*{2}([^\*]+)\*{2}[:：\s]*(.*)$", raw)
+    if m_bold:
+        k = clean_markdown_artifacts(m_bold.group(1))
+        v = clean_markdown_artifacts(m_bold.group(2))
+        if k:
+            return k, v
+
+    # 2) 优先识别中括号或中文括号包裹的核心重点词（如 【端侧部署】详细说明 或 [全功能集成] 详细说明）
+    m_bracket = re.match(r"^[\s\-*•]*[【\[]([^】\]]+)[】\]][:：\s]*(.*)$", raw)
+    if m_bracket:
+        k = clean_markdown_artifacts(m_bracket.group(1))
+        v = clean_markdown_artifacts(m_bracket.group(2))
+        if k:
+            return k, v
+
+    clean = clean_markdown_artifacts(raw)
     if not clean:
         return "", ""
 
-    # 1) 仅按中英文冒号、全角破折号或带空格的破折号拆分（不破坏 All-in-One 这种英文连字符）
+    # 3) 按中英文冒号、全角破折号或带空格的破折号拆分
     m = re.split(r"(?:[:：]|(?:\s+[-——]\s+)|(?:——))\s*", clean, maxsplit=1)
-    if len(m) == 2 and 2 <= len(m[0]) <= 25 and len(m[1]) >= 2:
+    if len(m) == 2 and 2 <= len(m[0]) <= 28 and len(m[1]) >= 2:
         return m[0].strip(), m[1].strip()
 
-    # 2) 较长文本：在首个标点/空格处切出「重点词」与「阐释」，两者都不为空才拆分
-    if len(clean) > 22:
-        m2 = re.search(r"[,，;；\s]", clean[4:22])
+    # 4) 较长文本（> 18字）无冒号时：智能寻找自然断句标点，不粗暴截断
+    if len(clean) > 18:
+        m2 = re.search(r"[,，、;；\s]", clean[4:20])
         if m2:
             idx = 4 + m2.start()
-            head, tail = clean[:idx].strip(), clean[idx + 1:].strip()
+            head = clean[:idx].strip()
+            tail = clean[idx + 1:].strip()
             if len(head) >= 2 and len(tail) >= 2:
                 return head, tail
+        # 若未找到标点，提取前 6~10 个字为重点标题，整句保留为详细说明（保证介绍清楚）
+        short_title = clean[:8].rstrip("的与和在对此从以")
+        return short_title, clean
 
-    # 3) 短句：整句即重点词，不再重复展示阐释（避免卡片里同一句话出现两遍）
-    return clean[:16], ""
+    # 5) 短句（<= 18字）：整句即重点词，阐述留空（排版时自适应居中）
+    return clean, ""
+
 
 class SlideSection:
-    def __init__(self, title: str, bullets: list[str], images: list[str] = None):
+    def __init__(self, title: str, bullets: list[str], images: list[str] = None, notes: str = ""):
         self.title = title
         self.bullets = bullets
         self.images = images or []
+        self.notes = notes.strip()
         self.layout_type = self._detect_layout()
 
     def _detect_layout(self) -> str:
@@ -251,22 +276,78 @@ class SlideSection:
             return "column_cards"
 
         return "standard_cards"
-def parse_and_paginate_markdown(text: str, base_dir: Path | None = None) -> tuple[str, str, list[SlideSection]]:
-    """解析 Markdown 并执行严格的分页限制：单页要点不超过 4 条。"""
+
+
+def parse_and_paginate_markdown(text: str, base_dir: Path | None = None) -> tuple[str, str, list[SlideSection], str, str]:
+    """解析 Markdown，提取专属演讲者口播备注文案，并执行严格的分页限制：单页要点不超过 4 条。"""
     deck_title = "演示文稿"
     subtitle = ""
-    raw_sections: list[tuple[str, list[str], list[str]]] = []
+    cover_notes = ""
+    end_notes = ""
+    raw_sections: list[tuple[str, list[str], list[str], str]] = []
 
     cur_title = "核心概览"
     cur_bullets: list[str] = []
     cur_images: list[str] = []
+    cur_notes: list[str] = []
     started = False
     seen_h2 = False
+    in_note_comment = False
 
     for raw in text.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
         if not stripped:
+            continue
+
+        # 1. 跨行 HTML 备注注释提取
+        if in_note_comment:
+            if "-->" in stripped:
+                part = stripped.split("-->", 1)[0].strip()
+                if part:
+                    cur_notes.append(part)
+                in_note_comment = False
+            else:
+                cur_notes.append(stripped)
+            continue
+
+        # 2. 单行/起首 HTML 口播备注识别：<!-- 口播文案: ... --> / <!-- 演讲备注: ... --> / <!-- note: ... -->
+        note_comment_match = re.search(
+            r"<!--\s*(?:口播文案|演讲备注|口播|旁白|演讲稿|解说词|note|notes)[:：\s]*(.*?)(?:-->|$)",
+            stripped,
+            re.IGNORECASE,
+        )
+        if note_comment_match:
+            note_content = note_comment_match.group(1).strip()
+            if "-->" in stripped:
+                if note_content:
+                    cur_notes.append(note_content)
+            else:
+                if note_content:
+                    cur_notes.append(note_content)
+                in_note_comment = True
+            continue
+
+        # 3. 引用块口播标注识别：> **口播文案**：... 或 > 口播：...
+        note_quote_match = re.match(
+            r"^>\s*(?:\*\*)?(?:口播文案|演讲备注|口播|旁白|解说词)(?:\*\*)?[:：\s]*(.*)",
+            stripped,
+        )
+        if note_quote_match:
+            c = note_quote_match.group(1).strip()
+            if c:
+                cur_notes.append(c)
+            continue
+
+        # 4. 中括号口播标注识别：【口播文案】... 或 [演讲备注] ...
+        note_bracket_match = re.match(
+            r"^[【\[](?:口播文案|演讲备注|口播|旁白|解说词)[】\]][:：\s]*(.*)",
+            stripped,
+        )
+        if note_bracket_match:
+            c = note_bracket_match.group(1).strip()
+            if c:
+                cur_notes.append(c)
             continue
 
         # 过滤 Markdown 纯分隔线 (如 --, ---, ***, ___)
@@ -297,10 +378,16 @@ def parse_and_paginate_markdown(text: str, base_dir: Path | None = None) -> tupl
 
         # 二级标题：幻灯片页面
         if line.startswith("## "):
-            if seen_h2 or cur_bullets or cur_images:
-                raw_sections.append((cur_title, cur_bullets, cur_images))
+            if not seen_h2:
+                # 第一页二级标题之前收集到的 notes 归属于封面
+                if cur_notes:
+                    cover_notes = " ".join(cur_notes).strip()
+                    cur_notes = []
+            if seen_h2 or cur_bullets or cur_images or cur_notes:
+                raw_sections.append((cur_title, cur_bullets, cur_images, " ".join(cur_notes).strip()))
                 cur_bullets = []
                 cur_images = []
+                cur_notes = []
             cur_title = clean_markdown_artifacts(line[3:]) or "核心内容"
             seen_h2 = True
             continue
@@ -319,39 +406,44 @@ def parse_and_paginate_markdown(text: str, base_dir: Path | None = None) -> tupl
 
         # 列表要点
         clean = clean_markdown_artifacts(stripped)
-        # 排除无意义的空行或纯短符号
         if clean and len(clean) >= 2 and not re.match(r"^[-*_]+$", clean):
             cur_bullets.append(clean)
 
-    if cur_bullets or cur_images or seen_h2:
-        raw_sections.append((cur_title, cur_bullets, cur_images))
+    if cur_bullets or cur_images or seen_h2 or cur_notes:
+        raw_sections.append((cur_title, cur_bullets, cur_images, " ".join(cur_notes).strip()))
 
     if not raw_sections:
-        raw_sections = [("核心概览", ["全功能离线智能体: 本地运算与极致安全", "开箱即用体验: 无需繁琐配置环境"], [])]
+        raw_sections = [("核心概览", ["全功能离线智能体: 本地运算与极致安全", "开箱即用体验: 无需繁琐配置环境"], [], "")]
 
     # 执行智能分页：任何单节如果超过 4 条要点，自动拆分为多页！
     MAX_PER_PAGE = 4
     final_sections: list[SlideSection] = []
 
-    for title, bullets, images in raw_sections:
+    for title, bullets, images, notes in raw_sections:
         if not bullets:
-            final_sections.append(SlideSection(title, ["（本篇章包含架构要点分析）"], images))
+            final_sections.append(SlideSection(title, ["（本篇章包含架构要点分析）"], images, notes=notes))
             continue
 
         if len(bullets) <= MAX_PER_PAGE:
-            final_sections.append(SlideSection(title, bullets, images))
+            final_sections.append(SlideSection(title, bullets, images, notes=notes))
         else:
-            # 智能拆分
             chunks = [bullets[i:i + MAX_PER_PAGE] for i in range(0, len(bullets), MAX_PER_PAGE)]
             sub_labels = ["核心定位", "功能全景", "应用落地", "延展探索"]
             for idx, chunk in enumerate(chunks):
                 label = sub_labels[idx] if idx < len(sub_labels) else f"第 {idx+1} 部分"
                 page_title = f"{title} · {label}"
-                # 图片只放在第一分节
                 page_imgs = images if idx == 0 else []
-                final_sections.append(SlideSection(page_title, chunk, page_imgs))
+                # 原始备注由首个分节使用，后续分节独立生成
+                page_note = notes if idx == 0 else ""
+                final_sections.append(SlideSection(page_title, chunk, page_imgs, notes=page_note))
 
-    return deck_title, subtitle, final_sections
+    # 检查最后一节是否为专门的致谢/总结页
+    if final_sections and any(k in final_sections[-1].title for k in ("致谢", "谢谢", "总结与致谢", "结束")):
+        end_sec = final_sections.pop()
+        if end_sec.notes:
+            end_notes = end_sec.notes
+
+    return deck_title, subtitle, final_sections, cover_notes, end_notes
 
 
 # ---------------------------------------------------------------- 生动口播解说词生成引擎
@@ -365,70 +457,119 @@ def generate_lively_speaker_script(
     total_pages: int,
     deck_title: str
 ) -> str:
-    """生成自然、口语化、紧扣内容的现场宣讲稿（拒绝照读 PPT、拒绝注入与内容无关的渲染）。"""
+    """生成富有感染力、感情充沛、深入剖析核心逻辑的现场宣讲稿（拒绝机械化照读 PPT）。"""
 
-    # 开场 / 目录 / 封底
-    if page_no == 1:
+    # 1. 封面开场
+    if page_no == 1 or layout_type == "cover":
         return (
-            f"大家好，欢迎来到今天的分享。我们将围绕《{deck_title}》展开，"
-            "从整体定位、关键能力到落地价值，一步一步把它讲清楚。下面正式开始。"
+            f"各位同仁、各位朋友，大家好！非常荣幸今天能和大家聚在一起。在当前数字化与智能化快速演进的浪潮下，"
+            f"我们每天都在思考一个根本命题：如何让前沿技术真正转化为稳定、可靠且具有深度价值的生产力？"
+            f"今天，我们将紧扣《{deck_title}》这一主题，从战略构想、核心突破到落地实践，展开全方位的深入剖析。"
+            "话不多说，让我们正式启程！"
         )
 
-    if "目录" in title:
-        joined = "、".join([b for b in bullets if b][:4])
+    # 2. 目录概览
+    if "目录" in title or layout_type == "catalog":
+        clean_titles = [clean_markdown_artifacts(b) for b in bullets if b][:4]
+        joined = "、".join(clean_titles)
+        path_str = f"沿着【{joined}】这条主线层层递进、抽丝剥茧" if joined else "沿着几大核心战略篇章层层推进"
         return (
-            "开始之前，我们先花一分钟看清整体脉络。今天的分享会沿着"
-            + (joined + "这条主线层层推进，让大家始终心中有数。" if joined else "几个核心篇章层层推进。")
+            "在正式切入各个业务细节之前，我们先花一分钟登高望远，看清本次分享的沙盘全景。"
+            f"今天的分享我们将{path_str}。"
+            "这套脉络旨在为大家搭建起从底层逻辑到顶层应用的完整闭环，让大家既能看清全局方位，又能把握关键抓手。"
         )
 
-    if page_no == total_pages:
+    # 3. 封底收束
+    if page_no == total_pages or layout_type == "end":
         return (
-            "到这里，今天的核心内容就全部讲完了。回顾整场分享，我们看到的不只是一套方案，"
-            "更是一条清晰、可落地、可持续演进的道路。感谢各位的耐心聆听，欢迎随时交流探讨。"
+            "行而不辍，履践致远。到这里，今天的核心分享就告一段落了。"
+            f"但《{deck_title}》所展现的蓝图与探索，才刚刚拉开序幕。"
+            "技术的终极价值在于解决真实世界的痛点，在于赋能每一个人的成长与创造。"
+            "由衷感谢大家的专注聆听与支持，期待接下来与大家携手共进、深化落地，谢谢大家！"
         )
 
     parts: list[str] = []
 
-    # 过渡引入（随版式与页面位置变化）
-    if layout_type == "stat_cards":
-        parts.append(f"我们先看一组直观的数据，它最能说明《{title}》带来的实际成效。")
+    # 4. 情境代入与设问开场（根据版式与主题定制现场感引导）
+    if layout_type == "comparison":
+        openers = [
+            f"面对《{title}》，很多团队在技术选型或业务推进时都会陷入两难抉择。屏幕上的这组对照，极其尖锐地呈现了两种不同路径带来的深层差距。",
+            f"在《{title}》的考量上，传统做法往往存在不少暗坑。通过将两种方案并置对比，优劣边界一目了然。",
+        ]
+    elif layout_type == "stat_cards":
+        openers = [
+            f"用事实说话，最有力量的往往是数据。在屏幕上《{title}》这一组亮眼指标的背后，凝结着我们在关键瓶颈上的全力攻坚突破。",
+            f"衡量一套方案的成色，核心看成效。《{title}》展现的这一组硬核数据，正是我们交给市场和业务的最有说服力的答卷。",
+        ]
     elif layout_type == "process_steps":
-        parts.append(f"在落地路径上，《{title}》被拆成了几个环环相扣的阶段，我们依次来看。")
+        openers = [
+            f"天下大事，必作于细。要把《{title}》的宏大构想落到实处，离不开一套条理清晰、环环相扣的实施路径。",
+            f"在推进落地层面，《{title}》被拆解为几个循序渐进的战略阶段，每一步都承前启后、有的放矢。",
+        ]
     elif layout_type == "timeline":
-        parts.append(f"让我们沿着时间脉络，回顾《{title}》一路走来的关键节点。")
-    elif layout_type == "comparison":
-        parts.append(f"这里我们把两种思路放在一起对照，优劣差异一目了然。")
+        openers = [
+            f"回望《{title}》的波澜历程，每一个时间刻度，都见证了一次关键的思维迭代与战略跃升。",
+            f"时间是最好的试金石。沿着《{title}》的发展轨迹，我们能清晰看懂这一体系是如何一步步沉淀并厚积薄发的。",
+        ]
     elif layout_type == "quote":
-        parts.append(f"接下来这句话，凝聚了我们在《{title}》上最核心的追求。")
+        openers = [
+            f"屏幕上这句凝练而铿锵有力的话语，正是我们在《{title}》中始终秉持的初心与最高准则。",
+            f"如果用一句话来概括《{title}》的精神内核，那就是屏幕上的这段宣言，它指引着我们所有的探索与前行。",
+        ]
+    elif layout_type == "image_text":
+        openers = [
+            f"大家请结合右侧直观的图解架构来看。图文呼应之下，《{title}》的整体运转机理与核心脉络清晰可见。",
+            f"在《{title}》这一环，我们通过可视化的全景架构，将复杂的机制化繁为简地呈现出来。",
+        ]
     else:
         openers = [
-            f"接下来看《{title}》，这是本次方案里非常关键的一环。",
-            f"下面我们把镜头推进到《{title}》。",
-            f"紧接着，重点说说《{title}》。",
+            f"现在让我们把焦点对准《{title}》。很多朋友在初次接触时最关心的往往是：它到底解决了什么核心痛点？其支撑底座又是什么？",
+            f"紧接着，我们深入到《{title}》的核心腹地。如果说前文搭建了框架，那么这一部分，则是为整个体系注入了强劲的运转动能。",
+            f"大家请看《{title}》。这不仅是业务落地的关键枢纽，更是直接决定最终用户体验与交付效能的核心胜负手。",
+            f"接下来这一页至关重要——《{title}》。我们在这里构建了一个多维协同、稳健自洽的闭环体系。",
         ]
-        parts.append(openers[(page_no - 1) % len(openers)])
+    parts.append(openers[(page_no - 1) % len(openers)])
 
-    # 逐点阐释：紧扣「重点词 + 说明」，不再塞入与内容无关的空话
-    leads = ["首先，", "其次，", "第三，", "再来看，"]
+    # 5. 核心要点现场演讲式深度拆解（告别机械重复的模板句式）
+    item_starters = [
+        ("首先映入眼帘、也是最根本的支柱，正是【{title}】。",
+         "它的破局点在于：{desc}。这直接化解了以往推进中的最大断点，让底盘扎得足够稳固。",
+         "这正是整个体系的立足之本，确保在复杂严苛的实际环境下依然能稳如磐石。"),
+        ("在打牢底座之后，第二项关键抓手在于【{title}】。",
+         "正如大家所见，{desc}。这彻底打通了原本相互割裂的环节，实现了跨越式的效能跃升。",
+         "这一环重在赋能提效，让原本繁琐耗时的流程实现真正意义上的降维与提速。"),
+        ("更进一步来看，【{title}】同样极具战略价值。",
+         "通过{desc}，不仅大幅增强了系统韧性，更为未来的持续拓展留足了空间与弹性。",
+         "它赋予了整体架构极强的敏捷度与自适应力，让每一次协作流转都能做到从容自如。"),
+        ("最后，作为至关重要的闭环防线，【{title}】同样不可或缺。",
+         "它严密确保了{desc}，真正筑牢了一道坚不可摧的安全、合规与品质屏障。",
+         "它形成了最后的护城河，让整体方案真正做到闭环无死角、运行无后顾之忧。"),
+    ]
+
     for i, b in enumerate(bullets):
         p_title, p_desc = extract_point_parts(b)
         if not p_title:
             continue
-        lead = leads[i] if i < len(leads) else "还有一点，"
-        if p_desc and p_desc != p_title and p_title not in p_desc:
-            parts.append(f"{lead}我们强调【{p_title}】：{p_desc}。")
-        else:
-            parts.append(f"{lead}核心在于【{p_title}】，这一点值得大家特别留意。")
+        template_idx = min(i, len(item_starters) - 1)
+        lead_fmt, with_desc_fmt, no_desc_fmt = item_starters[template_idx]
 
-    # 收束小结（通用、不越界）
+        lead_txt = lead_fmt.format(title=p_title)
+        if p_desc and p_desc != p_title and p_title not in p_desc:
+            body_txt = with_desc_fmt.format(title=p_title, desc=p_desc)
+        else:
+            body_txt = no_desc_fmt.format(title=p_title)
+
+        parts.append(f"{lead_txt}{body_txt}")
+
+    # 6. 价值升华结语
     closers = [
-        "这几项能力相互配合，构成了这一环节的完整闭环。",
-        "可以说，把握住这几点，就把握住了这一部分的关键。",
-        "这也是我们把它作为重点来设计的原因所在。",
+        "把这几个维度串联起来，大家会发现，这绝非散点功能的简单拼凑，而是一个有机协同、相互赋能的高效战斗力矩阵。",
+        "可以说，把握住这几项核心支柱，我们就真正握住了这一板块的主动权，让落地实施有的放矢、水到渠成。",
+        "正是得益于这套严密而富有弹性的机制设计，我们才能在多变的环境中始终保持领先的响应力与可靠性。",
     ]
     parts.append(closers[(page_no - 1) % len(closers)])
 
-    return "".join(parts)[:1200]
+    return "".join(parts)[:1500]
 
 # ---------------------------------------------------------------- 原生形状与文本排版原语
 
@@ -638,11 +779,15 @@ def build_quad_grid(prs, page_no: int, total: int, title: str, bullets: list[str
         add_shape(slide, x + 0.3, y + 0.25, badge_w, badge_h, fill=theme["soft2"], radius=0.5)
         add_text(slide, x + 0.3, y + 0.29, badge_w, 0.28, f"POINT 0{i+1}", size=9.5, bold=True, color=theme["primary"], align="center")
 
-        # 核心亮点标题 (大字突出重点)
-        add_text(slide, x + 0.3, y + 0.68, w - 0.6, 0.45, p_title, size=17, bold=True, color=INK)
-
-        # 阐述正文 (多行优雅排版)
-        add_text(slide, x + 0.3, y + 1.18, w - 0.6, 0.92, p_desc, size=13, color=INK_LIGHT, line_spacing=1.3)
+        if p_desc:
+            # 核心亮点标题 (大字突出重点)
+            add_text(slide, x + 0.3, y + 0.68, w - 0.6, 0.45, p_title, size=16, bold=True, color=INK)
+            # 阐述正文 (多行优雅排版，该详细的详细，把机制和收益介绍清楚)
+            desc_size = 12.0 if len(p_desc) > 45 else 13.0
+            add_text(slide, x + 0.3, y + 1.15, w - 0.6, h - 1.25, p_desc, size=desc_size, color=INK_LIGHT, line_spacing=1.3)
+        else:
+            # 纯重点词：居中大字，简洁有力
+            add_text(slide, x + 0.3, y + 0.95, w - 0.6, 0.8, p_title, size=18, bold=True, color=INK, align="left")
 
     add_footer(slide, page_no, total)
     return slide
@@ -672,12 +817,16 @@ def build_column_cards(prs, page_no: int, total: int, title: str, bullets: list[
         add_shape(slide, x + 0.3, top + 0.35, 0.65, 0.65, fill=theme["soft2"], shape="oval")
         add_text(slide, x + 0.3, top + 0.46, 0.65, 0.45, f"{i+1}", size=14, bold=True, color=theme["primary"], align="center")
 
-        # 核心标题
-        add_text(slide, x + 0.3, top + 1.2, w - 0.6, 0.7, p_title, size=18, bold=True, color=INK)
-        # 分割线
-        add_shape(slide, x + 0.3, top + 1.95, 1.2, 0.02, fill=theme["accent"], shape="rect")
-        # 阐述说明
-        add_text(slide, x + 0.3, top + 2.15, w - 0.6, 2.45, p_desc, size=13.5, color=INK_LIGHT, line_spacing=1.35)
+        if p_desc:
+            # 核心标题
+            add_text(slide, x + 0.3, top + 1.2, w - 0.6, 0.7, p_title, size=18, bold=True, color=INK)
+            # 分割线
+            add_shape(slide, x + 0.3, top + 1.95, 1.2, 0.02, fill=theme["accent"], shape="rect")
+            # 阐述说明 (介绍清楚)
+            desc_size = 12.5 if len(p_desc) > 60 else 13.5
+            add_text(slide, x + 0.3, top + 2.15, w - 0.6, h - 2.35, p_desc, size=desc_size, color=INK_LIGHT, line_spacing=1.35)
+        else:
+            add_text(slide, x + 0.3, top + 1.8, w - 0.6, 1.2, p_title, size=20, bold=True, color=INK, align="center")
 
     add_footer(slide, page_no, total)
     return slide
@@ -711,7 +860,8 @@ def build_stat_cards(prs, page_no: int, total: int, title: str, bullets: list[st
 
         add_text(slide, x + 0.2, top + 1.1, w - 0.4, 1.2, highlight_num, size=36, bold=True, color=theme["primary"], align="center")
         add_shape(slide, x + (w - 1.2)/2, top + 2.45, 1.2, 0.02, fill=LINE, shape="rect")
-        add_text(slide, x + 0.25, top + 2.7, w - 0.5, 1.9, desc, size=13.5, color=INK_LIGHT, align="center", line_spacing=1.3)
+        desc_size = 12.0 if len(desc) > 50 else 13.5
+        add_text(slide, x + 0.25, top + 2.7, w - 0.5, 1.9, desc, size=desc_size, color=INK_LIGHT, align="center", line_spacing=1.3)
 
     add_footer(slide, page_no, total)
     return slide
@@ -739,7 +889,8 @@ def build_process_steps(prs, page_no: int, total: int, title: str, bullets: list
 
         add_text(slide, x + 0.2, top + 0.7, w - 0.4, 0.6, p_title, size=16, bold=True, color=INK, align="center")
         add_shape(slide, x + (w - 0.8)/2, top + 1.35, 0.8, 0.02, fill=LINE, shape="rect")
-        add_text(slide, x + 0.25, top + 1.55, w - 0.5, 2.5, p_desc, size=13, color=INK_LIGHT, line_spacing=1.35)
+        desc_size = 12.0 if len(p_desc) > 50 else 13.0
+        add_text(slide, x + 0.25, top + 1.55, w - 0.5, 2.5, p_desc, size=desc_size, color=INK_LIGHT, line_spacing=1.35)
 
         if i < count - 1:
             arrow_x = x + w + 0.08
@@ -768,8 +919,12 @@ def build_image_text(prs, page_no: int, total: int, title: str, bullets: list[st
         add_shape(slide, 0.8, y, text_w, card_h, fill=theme["card_bg"], line=LINE, line_w=1.0, radius=0.12)
         add_shape(slide, 0.8, y + 0.12, 0.08, card_h - 0.24, fill=theme["primary"] if i % 2 == 0 else theme["accent"], radius=0.5)
 
-        add_text(slide, 1.05, y + 0.12, text_w - 0.35, 0.38, p_title, size=15, bold=True, color=INK)
-        add_text(slide, 1.05, y + 0.52, text_w - 0.35, card_h - 0.6, p_desc, size=12.5, color=INK_LIGHT, line_spacing=1.25)
+        if p_desc:
+            add_text(slide, 1.05, y + 0.12, text_w - 0.35, 0.38, p_title, size=15, bold=True, color=INK)
+            desc_size = 11.5 if len(p_desc) > 50 else 12.5
+            add_text(slide, 1.05, y + 0.52, text_w - 0.35, card_h - 0.6, p_desc, size=desc_size, color=INK_LIGHT, line_spacing=1.25)
+        else:
+            add_text(slide, 1.05, y + (card_h - 0.4) / 2, text_w - 0.35, 0.4, p_title, size=16, bold=True, color=INK)
 
     img_x, img_y, img_w, img_h = 7.3, 1.6, 5.2, 4.9
     img_path = images[0] if images else ""
@@ -792,7 +947,7 @@ def build_image_text(prs, page_no: int, total: int, title: str, bullets: list[st
 
 
 def build_standard_cards(prs, page_no: int, total: int, title: str, bullets: list[str], theme: dict):
-    """水平卡片排版（控制在 3 条以内，大卡片，大字重点）。"""
+    """水平卡片排版（控制在 3 条以内，大卡片，大字重点与详细说明）。"""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_header(slide, page_no, total, title, theme)
 
@@ -816,11 +971,14 @@ def build_standard_cards(prs, page_no: int, total: int, title: str, bullets: lis
         add_shape(slide, bx, by, badge_d, badge_d, fill=theme["primary"] if i % 2 == 0 else theme["accent"], shape="oval")
         add_text(slide, bx, by + 0.07, badge_d, 0.3, str(i + 1), size=13, bold=True, color=WHITE, align="center")
 
-        # 核心重点标题 (粗体大字，一目了然)
-        add_text(slide, left + 0.95, y + 0.18, width - 1.25, 0.42, p_title, size=16, bold=True, color=INK)
-
-        # 阐述说明正文
-        add_text(slide, left + 0.95, y + 0.62, width - 1.25, card_h - 0.72, p_desc, size=13, color=INK_LIGHT, line_spacing=1.3)
+        if p_desc:
+            # 核心重点标题 (粗体大字，一目了然)
+            add_text(slide, left + 0.95, y + 0.18, width - 1.25, 0.42, p_title, size=16.5, bold=True, color=INK)
+            # 阐述说明正文 (详细介绍)
+            desc_size = 12.0 if len(p_desc) > 60 else 13.0
+            add_text(slide, left + 0.95, y + 0.62, width - 1.25, card_h - 0.72, p_desc, size=desc_size, color=INK_LIGHT, line_spacing=1.3)
+        else:
+            add_text(slide, left + 0.95, y + (card_h - 0.45) / 2, width - 1.25, 0.45, p_title, size=17.5, bold=True, color=INK)
 
     add_footer(slide, page_no, total)
     return slide
@@ -859,7 +1017,8 @@ def build_timeline(prs, page_no: int, total: int, title: str, bullets: list[str]
         node_fill = theme["primary"] if i % 2 == 0 else theme["accent"]
         add_shape(slide, x - 0.17, y_line - 0.15, 0.36, 0.36, fill=node_fill, shape="oval")
         add_text(slide, x - 1.05, y_line - 1.55, 2.1, 0.5, p_title, size=15, bold=True, color=INK, align="center")
-        add_text(slide, x - 1.1, y_line + 0.4, 2.2, 1.5, p_desc, size=11.5, color=INK_LIGHT, align="center", line_spacing=1.25)
+        desc_size = 11.0 if len(p_desc) > 40 else 12.0
+        add_text(slide, x - 1.1, y_line + 0.4, 2.2, 1.5, p_desc, size=desc_size, color=INK_LIGHT, align="center", line_spacing=1.25)
 
     add_footer(slide, page_no, total)
     return slide
@@ -882,14 +1041,16 @@ def build_comparison(prs, page_no: int, total: int, title: str, bullets: list[st
     l_title, l_desc = extract_point_parts(left_b)
     add_text(slide, x1 + 0.3, top + 0.35, col_w - 0.6, 0.7, l_title or "方案 A", size=20, bold=True, color=theme["primary_light"], line_spacing=1.2)
     add_shape(slide, x1 + 0.3, top + 1.2, 1.0, 0.04, fill=theme["primary_light"], shape="rect")
-    add_text(slide, x1 + 0.3, top + 1.45, col_w - 0.6, h - 1.7, l_desc, size=13, color=INK_LIGHT, line_spacing=1.4)
+    desc_size_l = 12.0 if len(l_desc) > 60 else 13.0
+    add_text(slide, x1 + 0.3, top + 1.45, col_w - 0.6, h - 1.7, l_desc, size=desc_size_l, color=INK_LIGHT, line_spacing=1.4)
 
     add_shape(slide, x2, top, col_w, h, fill=theme["card_bg"], line=theme["primary"], line_w=1.5, radius=0.14)
     add_shape(slide, x2, top, col_w, 0.08, fill=theme["primary"], shape="rect")
     r_title, r_desc = extract_point_parts(right_b)
     add_text(slide, x2 + 0.3, top + 0.35, col_w - 0.6, 0.7, r_title or "方案 B", size=20, bold=True, color=theme["primary_dark"], line_spacing=1.2)
     add_shape(slide, x2 + 0.3, top + 1.2, 1.0, 0.04, fill=theme["accent"], shape="rect")
-    add_text(slide, x2 + 0.3, top + 1.45, col_w - 0.6, h - 1.7, r_desc, size=13, color=INK_LIGHT, line_spacing=1.4)
+    desc_size_r = 12.0 if len(r_desc) > 60 else 13.0
+    add_text(slide, x2 + 0.3, top + 1.45, col_w - 0.6, h - 1.7, r_desc, size=desc_size_r, color=INK_LIGHT, line_spacing=1.4)
 
     add_shape(slide, 6.08, top + 1.85, 0.9, 0.9, fill=theme["primary"], shape="oval")
     add_text(slide, 6.08, top + 2.08, 0.9, 0.5, "VS", size=16, bold=True, color=WHITE, align="center")
@@ -909,8 +1070,8 @@ def alternate_layout(layout: str, sec) -> str:
         return "quad_grid" if n == 4 else "column_cards"
     if layout == "process_steps":
         return "quad_grid" if n == 4 else "standard_cards"
-    # timeline / comparison / quote / stat_cards / image_text 内容特殊，保持原版式
     return layout
+
 
 def build_end(prs, theme: dict, total: int):
     """封底页：大气总结致谢。"""
@@ -942,7 +1103,7 @@ def quick_markdown_pptx(text: str, out_path: Path) -> Path:
 
     theme = THEMES[choose_theme(text)]
 
-    deck_title, subtitle, sections = parse_and_paginate_markdown(text, base_dir=out_path.parent)
+    deck_title, subtitle, sections, cover_notes, end_notes = parse_and_paginate_markdown(text, base_dir=out_path.parent)
 
     prs = Presentation()
     prs.slide_width = Inches(13.334)  # 16:9
@@ -953,8 +1114,10 @@ def quick_markdown_pptx(text: str, out_path: Path) -> Path:
 
     # 1. 封面
     cover_slide = build_cover(prs, deck_title, subtitle, theme, total_pages)
-    cover_slide.notes_slide.notes_text_frame.text = generate_lively_speaker_script(
-        deck_title, [], "cover", 1, total_pages, deck_title
+    cover_slide.notes_slide.notes_text_frame.text = (
+        cover_notes if cover_notes else generate_lively_speaker_script(
+            deck_title, [], "cover", 1, total_pages, deck_title
+        )
     )
 
     cur_page = 1
@@ -994,16 +1157,21 @@ def quick_markdown_pptx(text: str, out_path: Path) -> Path:
         else:
             slide = build_standard_cards(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
 
-        # 写入生动、富有感染力的口播演讲稿（非死读 PPT）
-        lively_notes = generate_lively_speaker_script(
-            sec.title, sec.bullets, layout, cur_page, total_pages, deck_title
-        )
+        # 写入生动、富有感染力的口播演讲稿（优先使用显式备注，无显式备注时由演说引擎深度分析生成）
+        if sec.notes:
+            lively_notes = sec.notes
+        else:
+            lively_notes = generate_lively_speaker_script(
+                sec.title, sec.bullets, layout, cur_page, total_pages, deck_title
+            )
         slide.notes_slide.notes_text_frame.text = lively_notes
 
     # 4. 封底
     end_slide = build_end(prs, theme, total_pages)
-    end_slide.notes_slide.notes_text_frame.text = generate_lively_speaker_script(
-        "致谢与总结", [], "end", total_pages, total_pages, deck_title
+    end_slide.notes_slide.notes_text_frame.text = (
+        end_notes if end_notes else generate_lively_speaker_script(
+            "致谢与总结", [], "end", total_pages, total_pages, deck_title
+        )
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
