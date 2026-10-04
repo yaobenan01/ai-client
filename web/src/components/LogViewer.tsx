@@ -11,6 +11,7 @@ export interface TaskStep {
 
 interface LogViewerProps {
   logsJson?: string | null
+  running?: boolean
 }
 
 interface ToolOperation {
@@ -31,6 +32,7 @@ interface UnifiedStep {
   timestamp: number
   thoughtContent?: string
   operations: ToolOperation[]
+  status?: 'done' | 'running' | 'failed'
 }
 
 const ACTION_MAP: Record<string, { label: string; icon: string; badgeClass: string }> = {
@@ -56,8 +58,21 @@ function extractSummary(tool_name: string | undefined, inputStr: string | undefi
   }
   return inputStr.length > 40 ? inputStr.slice(0, 40) + '...' : inputStr
 }
+type StepStatus = 'done' | 'running' | 'failed'
 
-export default function LogViewer({ logsJson }: LogViewerProps) {
+/** 根据步骤类型与子操作推导该步骤的执行状态 */
+function stepStatus(st: UnifiedStep, running: boolean): StepStatus {
+  if (st.action === 'error') return 'failed'
+  if (st.action === 'finish') return 'done'
+  if (st.action === 'thought') return 'done'
+  // tool 步骤
+  if (st.operations.some((o) => o.isError)) return 'failed'
+  const last = st.operations[st.operations.length - 1]
+  if (running && last && !last.output) return 'running'
+  return 'done'
+}
+
+export default function LogViewer({ logsJson, running = false }: LogViewerProps) {
   const [mergeSteps, setMergeSteps] = useState(true)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
 
@@ -265,6 +280,7 @@ export default function LogViewer({ logsJson }: LogViewerProps) {
           const isExp = expanded[st.id] ?? (st.action === 'finish' || st.action === 'error' || idx === unifiedSteps.length - 1)
           const timeStr = st.timestamp ? new Date(st.timestamp * 1000).toLocaleTimeString() : ''
           const opCount = st.operations.length
+          const status = stepStatus(st, running)
 
           // 收集多个子操作的简要对象信息
           const summaries = st.operations
@@ -316,7 +332,58 @@ export default function LogViewer({ logsJson }: LogViewerProps) {
                       </span>
                     )}
                   </div>
-                  <div className="timeline-header-right">
+                  <div className="timeline-header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {status === 'running' && (
+                      <span
+                        className="status-pill"
+                        style={{
+                          background: 'rgba(245, 158, 11, 0.14)',
+                          color: '#b45309',
+                          border: '1px solid rgba(245, 158, 11, 0.35)',
+                          borderRadius: 12,
+                          padding: '2px 9px',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        ● 执行中
+                      </span>
+                    )}
+                    {status === 'done' && (
+                      <span
+                        className="status-pill"
+                        style={{
+                          background: 'rgba(16, 185, 129, 0.12)',
+                          color: '#047857',
+                          border: '1px solid rgba(16, 185, 129, 0.3)',
+                          borderRadius: 12,
+                          padding: '2px 9px',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        ✓ 完成
+                      </span>
+                    )}
+                    {status === 'failed' && (
+                      <span
+                        className="status-pill"
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.12)',
+                          color: '#b91c1c',
+                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          borderRadius: 12,
+                          padding: '2px 9px',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        ✗ 失败
+                      </span>
+                    )}
                     <span className="muted time-label">{timeStr}</span>
                     <span className="arrow-toggle">{isExp ? '▲' : '▼'}</span>
                   </div>

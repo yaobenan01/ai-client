@@ -27,6 +27,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -34,11 +35,14 @@ def log_step(step: int, total: int, msg: str) -> None:
     print(f"\n[步骤 {step}/{total}] {msg}", flush=True)
 
 
-def sh(cmd, **kw):
+def sh(cmd, timeout: float | None = None, **kw):
     cmd_str = " ".join(str(c) for c in cmd)
     # 过滤可能太长的命令行日志
     print(f"  -> 执行: {cmd_str[:120]}{'...' if len(cmd_str) > 120 else ''}", flush=True)
-    res = subprocess.run(cmd, check=False, **kw)
+    try:
+        res = subprocess.run(cmd, check=False, timeout=timeout, **kw)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"命令执行超时（>{timeout}s）: {cmd_str}")
     if res.returncode != 0:
         raise RuntimeError(f"命令执行失败 (退出码 {res.returncode}): {cmd_str}")
     return res
@@ -148,7 +152,15 @@ def find_piper() -> tuple[str, str]:
 def pptx_to_pdf(pptx: Path, out_dir: Path) -> Path:
     lo = find_libreoffice()
     print(f"  -> 使用 LibreOffice: {lo}")
-    sh([lo, "--headless", "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)])
+    # 关键：给 LibreOffice 指定独立用户配置目录，避免多实例/默认 profile 锁导致
+    # headless 转换无限期挂起（Windows 下非常常见）；同时加超时兜底。
+    profile = out_dir / "lo_profile"
+    profile.mkdir(parents=True, exist_ok=True)
+    env_arg = f"-env:UserInstallation={profile.resolve().as_uri()}"
+    sh(
+        [lo, "--headless", env_arg, "--norestore", "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)],
+        timeout=300,
+    )
     pdf = out_dir / (pptx.stem + ".pdf")
     if not pdf.exists():
         raise RuntimeError(f"LibreOffice 未能导出 PDF: 预期路径 {pdf} 不存在")
@@ -156,7 +168,7 @@ def pptx_to_pdf(pptx: Path, out_dir: Path) -> Path:
     return pdf
 
 
-def pdf_to_pngs(pdf: Path, out_dir: Path, dpi: int = 160) -> list[Path]:
+def pdf_to_pngs(pdf: Path, out_dir: Path, dpi: int = 128) -> list[Path]:
     import fitz  # PyMuPDF
 
     doc = fitz.open(pdf)
@@ -230,44 +242,44 @@ def generate_silent_audio(out: Path, duration: float, ffmpeg: str) -> None:
     sh([ffmpeg, "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", dur_str, "-c:a", "pcm_s16le", str(out)])
 
 
+def synthesize_one(i: int, text: str, work: Path, ffmpeg: str, piper_exe: str, piper_model: str) -> Path:
+    """合成单页解说旁白（多级容灾：Piper -> Windows SAPI -> 静音）。"""
+    out = work / f"audio_{i:03d}.wav"
+    clean_text = text.strip()
+
+    if not clean_text:
+        generate_silent_audio(out, 3.0, ffmpeg)
+        return out
+
+    success = False
+    if piper_exe and piper_model and Path(piper_model).exists():
+        success = tts_piper(clean_text, out, piper_exe, piper_model)
+        if success:
+            print(f"    - 第 {i} 页语音合成完成 (Piper 神经网络): {clean_text[:25]}...")
+    if not success and sys.platform == "win32":
+        success = tts_windows_sapi(clean_text, out)
+        if success:
+            print(f"    - 第 {i} 页语音合成完成 (Windows SAPI5): {clean_text[:25]}...")
+    if not success:
+        generate_silent_audio(out, 3.0, ffmpeg)
+    return out
+
+
 def synthesize_all(notes: list[str], engine: str, work: Path, ffmpeg: str) -> list[Path]:
     piper_exe, piper_model = find_piper()
-    wavs = []
+    workers = min(4, os.cpu_count() or 2)
+    wavs: list[Path | None] = [None] * len(notes)
 
-    print(f"  -> 开始合成 {len(notes)} 段解说旁白音频...")
-    for i, text in enumerate(notes, start=1):
-        out = work / f"audio_{i:03d}.wav"
-        clean_text = text.strip()
+    print(f"  -> 开始并行合成 {len(notes)} 段解说旁白音频（{workers} 并发）...")
+    tasks = [(i, text) for i, text in enumerate(notes, start=1)]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i, wav in pool.map(
+            lambda item: (item[0], synthesize_one(item[0], item[1], work, ffmpeg, piper_exe, piper_model)),
+            tasks,
+        ):
+            wavs[i - 1] = wav
 
-        if not clean_text:
-            print(f"    - 第 {i} 页无解说词，生成 3 秒静音转场")
-            generate_silent_audio(out, 3.0, ffmpeg)
-            wavs.append(out)
-            continue
-
-        success = False
-        # 1. 优先 Piper
-        if piper_exe and piper_model and Path(piper_model).exists():
-            success = tts_piper(clean_text, out, piper_exe, piper_model)
-            if success:
-                print(f"    - 第 {i} 页语音合成完成 (Piper 神经网络): {clean_text[:25]}...")
-
-        # 2. 回退到 Windows SAPI
-        if not success and sys.platform == "win32":
-            success = tts_windows_sapi(clean_text, out)
-            if success:
-                print(f"    - 第 {i} 页语音合成完成 (Windows SAPI5): {clean_text[:25]}...")
-
-        # 3. 兜底静音
-        if not success:
-            print(f"    - 第 {i} 页语音合成失败或无可用引擎，生成 3 秒兜底音频")
-            generate_silent_audio(out, 3.0, ffmpeg)
-
-        wavs.append(out)
-
-    return wavs
-
-
+    return [w for w in wavs if w is not None]
 def make_clip(slide: Path, wav: Path, clip: Path, ffmpeg: str) -> None:
     """将单页图片与对应音频合成独立视频切片。"""
     cmd = [
@@ -276,9 +288,13 @@ def make_clip(slide: Path, wav: Path, clip: Path, ffmpeg: str) -> None:
         "-loop", "1",
         "-i", str(slide),
         "-i", str(wav),
+        # 强制输出尺寸为偶数：128/160 DPI 下宽度可能为奇数(如 1707)，x264 无法编码
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:v", "libx264",
-        "-tune", "stillimage",
+        "-preset", "veryfast",
+        "-crf", "23",
         "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         "-c:a", "aac",
         "-b:a", "128k",
         "-shortest",
@@ -341,13 +357,20 @@ def main() -> int:
 
         # 阶段 4/4: 合成各页面视频切片并最终拼接
         log_step(4, 4, "使用内置 FFmpeg 进行音视频画面对齐与视频拼接...")
-        clips = []
-        for i, (slide, wav) in enumerate(zip(slides, wavs), start=1):
-            clip = work / f"clip_{i:03d}.mp4"
-            print(f"  -> 渲染第 {i}/{len(slides)} 页视频切片...")
-            make_clip(slide, wav, clip, ffmpeg)
-            clips.append(clip)
+        slide_wav_pairs = list(zip(slides, wavs))
+        clip_workers = min(4, os.cpu_count() or 2)
+        clips: list[Path | None] = [None] * len(slide_wav_pairs)
+        print(f"  -> 并行渲染 {len(slide_wav_pairs)} 页视频切片（{clip_workers} 并发）...")
+        with ThreadPoolExecutor(max_workers=clip_workers) as pool:
+            def render_one(item):
+                i, (slide, wav) = item
+                clip = work / f"clip_{i:03d}.mp4"
+                make_clip(slide, wav, clip, ffmpeg)
+                return i, clip
+            for i, clip in pool.map(render_one, list(enumerate(slide_wav_pairs, start=1))):
+                clips[i - 1] = clip
 
+        clips = [c for c in clips if c is not None]
         print(f"  -> 拼接全部 {len(clips)} 个视频切片为最终成品视频...")
         concat_clips(clips, out, ffmpeg)
 

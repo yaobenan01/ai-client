@@ -125,23 +125,28 @@ def extract_point_parts(bullet: str) -> tuple[str, str]:
     例如：
       'All-in-One 工作台: 对话、写作、翻译一站式完成' -> ('All-in-One 工作台', '对话、写作、翻译一站式完成')
       '隐私优先 - 敏感数据本地处理' -> ('隐私优先', '敏感数据本地处理')
+      '安全合规'                                  -> ('安全合规', '')
     """
     clean = clean_markdown_artifacts(bullet)
-    # 仅按中英文冒号、全角破折号或带空格的破折号拆分，绝不能破坏 All-in-One 这种英文单词连字符
+    if not clean:
+        return "", ""
+
+    # 1) 仅按中英文冒号、全角破折号或带空格的破折号拆分（不破坏 All-in-One 这种英文连字符）
     m = re.split(r"(?:[:：]|(?:\s+[-——]\s+)|(?:——))\s*", clean, maxsplit=1)
     if len(m) == 2 and 2 <= len(m[0]) <= 25 and len(m[1]) >= 2:
         return m[0].strip(), m[1].strip()
 
-    # 无明确分隔符时，如果前面几个字包含专有名词或较短，取前10个字作为重点，后面作为展开
+    # 2) 较长文本：在首个标点/空格处切出「重点词」与「阐释」，两者都不为空才拆分
     if len(clean) > 22:
-        # 寻找第一个标点或空格
-        match_punc = re.search(r"[,，\s]", clean[4:18])
-        if match_punc:
-            split_idx = 4 + match_punc.start()
-            return clean[:split_idx].strip(), clean[split_idx+1:].strip()
+        m2 = re.search(r"[,，;；\s]", clean[4:22])
+        if m2:
+            idx = 4 + m2.start()
+            head, tail = clean[:idx].strip(), clean[idx + 1:].strip()
+            if len(head) >= 2 and len(tail) >= 2:
+                return head, tail
 
-    return clean[:16], clean
-
+    # 3) 短句：整句即重点词，不再重复展示阐释（避免卡片里同一句话出现两遍）
+    return clean[:16], ""
 
 class SlideSection:
     def __init__(self, title: str, bullets: list[str], images: list[str] = None):
@@ -157,7 +162,7 @@ class SlideSection:
         text_corpus = " ".join(self.bullets)
 
         # 1. 指标亮点数据页 (如 99.8%、300%、5000+、TOP 1)
-        metric_matches = re.findall(r"(\d+(?:\.\d+)?%|\d+[xX倍]|\d{2,}\+?万?|\bTOP\s*\d+\b)", text_corpus)
+        metric_matches = re.findall(r"(\d+(?:\.\d+)?%|\d+[xX倍]|\d+\+|\bTOP\s*\d+\b|\d{2,}\s*万?)", text_corpus)
         if len(metric_matches) >= 2 and len(self.bullets) <= 4:
             return "stat_cards"
 
@@ -291,71 +296,64 @@ def generate_lively_speaker_script(
     total_pages: int,
     deck_title: str
 ) -> str:
-    """生成自然生动、富有感染力、现场感十足的演讲者口播稿（拒绝机械照读）。"""
-    parts = []
+    """生成自然、口语化、紧扣内容的现场宣讲稿（拒绝照读 PPT、拒绝注入与内容无关的渲染）。"""
 
-    # 1. 现场感承上启下引入
+    # 开场 / 目录 / 封底
     if page_no == 1:
-        return f"大家好！今天我非常荣幸能向大家分享《{deck_title}》。在接下来的汇报中，我们将全方位解析这一方案的核心架构、关键突破与实践价值。让我们正式开始。"
-    elif "目录" in title:
-        return "在深入展开之前，我们先整体浏览一下今天汇报的核心篇章结构。整个内容由浅入深，涵盖了关键定位、核心功能以及落地成果，让我们逐一深入探讨。"
-    elif page_no == 2:
-        parts.append(f"首先，让我们把目光投向《{title}》这一核心篇章。")
-    elif page_no == total_pages:
-        return "以上就是本次汇报的全部核心内容。我们始终坚信，只有真正贴近用户需求、兼顾安全与效率的方案，才能创造持久的价值。非常感谢大家的聆听与支持，欢迎随时交流探讨！"
-    elif layout_type == "stat_cards":
-        parts.append(f"大家请看屏幕上这组亮眼的数据，它非常直观地展现了在《{title}》方面所取得的突破性成效。")
+        return (
+            f"大家好，欢迎来到今天的分享。我们将围绕《{deck_title}》展开，"
+            "从整体定位、关键能力到落地价值，一步一步把它讲清楚。下面正式开始。"
+        )
+
+    if "目录" in title:
+        joined = "、".join([b for b in bullets if b][:4])
+        return (
+            "开始之前，我们先花一分钟看清整体脉络。今天的分享会沿着"
+            + (joined + "这条主线层层推进，让大家始终心中有数。" if joined else "几个核心篇章层层推进。")
+        )
+
+    if page_no == total_pages:
+        return (
+            "到这里，今天的核心内容就全部讲完了。回顾整场分享，我们看到的不只是一套方案，"
+            "更是一条清晰、可落地、可持续演进的道路。感谢各位的耐心聆听，欢迎随时交流探讨。"
+        )
+
+    parts: list[str] = []
+
+    # 过渡引入（随版式与页面位置变化）
+    if layout_type == "stat_cards":
+        parts.append(f"我们先看一组直观的数据，它最能说明《{title}》带来的实际成效。")
     elif layout_type == "process_steps":
-        parts.append(f"在具体实施落地的路径上，《{title}》被拆解为了清晰有序、环环相扣的几个推进阶段。")
+        parts.append(f"在落地路径上，《{title}》被拆成了几个环环相扣的阶段，我们依次来看。")
     else:
-        intros = [
-            f"接下来，请大家重点关注《{title}》，这也是整个体系中最具分量的一部分。",
-            f"进一步深入来看，《{title}》为我们解决实际痛点提供了坚实的支点。",
-            f"紧接着，我们来看《{title}》，它在整个业务流转中起到了至关重要的承载作用。",
+        openers = [
+            f"接下来看《{title}》，这是本次方案里非常关键的一环。",
+            f"下面我们把镜头推进到《{title}》。",
+            f"紧接着，重点说说《{title}》。",
         ]
-        parts.append(intros[page_no % len(intros)])
+        parts.append(openers[(page_no - 1) % len(openers)])
 
-    # 2. 逐点生动口语化阐释
-    point_openers = [
-        "第一点，也是最关键的基石，在于【{}】。",
-        "紧接着第二点，我们重点发力于【{}】。",
-        "第三点，在【{}】方面，我们做了深度的打磨与升级。",
-        "第四点，【{}】则构成了整个体验闭环不可或缺的保障。",
-    ]
-
+    # 逐点阐释：紧扣「重点词 + 说明」，不再塞入与内容无关的空话
+    leads = ["首先，", "其次，", "第三，", "再来看，"]
     for i, b in enumerate(bullets):
         p_title, p_desc = extract_point_parts(b)
-        opener = point_openers[i] if i < len(point_openers) else "另外，在【{}】上，"
-        opener_text = opener.format(p_title)
-
-        # 组织生动阐释：结合用户痛点与价值
-        explanation = p_desc
-        if not explanation.endswith(("。", "！", "？")):
-            explanation += "。"
-
-        # 加入口语化延伸修辞
-        if i == 0:
-            exp_spoken = f"{opener_text}正如大家所见，{explanation}这不仅极大地优化了传统繁琐的链路，更为用户带来了真正流畅的一站式操作体验。"
-        elif i == 1:
-            exp_spoken = f"{opener_text}针对实际场景中最严苛的要求，{explanation}切实做到了把数据安全与主动权牢牢把握在用户自己手中。"
-        elif i == 2:
-            exp_spoken = f"{opener_text}在这里，{explanation}使得整体系统无论在离线环境还是重度任务下，都能保持高水准的稳定性。"
+        if not p_title:
+            continue
+        lead = leads[i] if i < len(leads) else "还有一点，"
+        if p_desc and p_desc != p_title and p_title not in p_desc:
+            parts.append(f"{lead}我们强调【{p_title}】：{p_desc}。")
         else:
-            exp_spoken = f"{opener_text}{explanation}从而让全套能力真正做到即开即用、零门槛覆盖。"
+            parts.append(f"{lead}核心在于【{p_title}】，这一点值得大家特别留意。")
 
-        parts.append(exp_spoken)
-
-    # 3. 页面升华小结
+    # 收束小结（通用、不越界）
     closers = [
-        "正是这几项特性的协同并进，使我们在这一维度建立起了非常扎实的技术与体验壁垒。",
-        "可以说，这项设计的落地，彻底免去了用户的后顾之忧，实现了效率的成倍跃升。",
-        "这也正是我们产品理念的核心体现——用最纯粹的极简设计，承载最强大的生产力赋能。",
+        "这几项能力相互配合，构成了这一环节的完整闭环。",
+        "可以说，把握住这几点，就把握住了这一部分的关键。",
+        "这也是我们把它作为重点来设计的原因所在。",
     ]
-    parts.append(closers[page_no % len(closers)])
+    parts.append(closers[(page_no - 1) % len(closers)])
 
-    full_script = "".join(parts)
-    return full_script[:1200]
-
+    return "".join(parts)[:1200]
 
 # ---------------------------------------------------------------- 原生形状与文本排版原语
 
@@ -626,7 +624,7 @@ def build_stat_cards(prs, page_no: int, total: int, title: str, bullets: list[st
         text = bullets[i]
         x = 0.8 + i * (w + gap)
 
-        num_match = re.search(r"(\d+(?:\.\d+)?%|\d+[xX倍]|\d{2,}\+?万?|\bTOP\s*\d+\b)", text)
+        num_match = re.search(r"(\d+(?:\.\d+)?%|\d+[xX倍]|\d+\+|\bTOP\s*\d+\b|\d{2,}\s*万?)", text)
         highlight_num = num_match.group(1) if num_match else f"0{i+1}"
         desc = text.replace(highlight_num, "").strip(" :：-——,，") or text
 

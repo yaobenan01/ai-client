@@ -350,7 +350,7 @@ export default function TaskDetail() {
       {/* 规划与执行轨迹时间线 */}
       <div className="card">
         <h3 style={{ marginBottom: 14 }}>🔍 规划与执行轨迹</h3>
-        <LogViewer logsJson={task.logs} />
+        <LogViewer logsJson={task.logs} running={task.status === "running" || task.status === "planning"} />
       </div>
     </div>
   )
