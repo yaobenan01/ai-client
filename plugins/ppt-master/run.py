@@ -82,7 +82,57 @@ THEMES = {
         "soft2": (0xF1, 0xF5, 0xF9),
         "card_bg": (0xFF, 0xFF, 0xFF),
     },
+    "retro": {
+        "primary": (0x8C, 0x4A, 0x2F),        # 复古砖红（兵工/历史/文旅）
+        "primary_dark": (0x5C, 0x2E, 0x12),
+        "primary_light": (0xC0, 0x7A, 0x50),
+        "accent": (0x5B, 0x6B, 0x3A),         # 军旅橄榄绿
+        "soft": (0xF7, 0xF2, 0xEA),
+        "soft2": (0xF0, 0xE6, 0xD4),
+        "card_bg": (0xFF, 0xFF, 0xFF),
+    },
+    "forest": {
+        "primary": (0x2F, 0x7D, 0x4F),        # 森林绿（自然/生态/农业/文旅）
+        "primary_dark": (0x1B, 0x4D, 0x31),
+        "primary_light": (0x6F, 0xB0, 0x82),
+        "accent": (0xE0, 0xA8, 0x3D),         # 麦田金
+        "soft": (0xF2, 0xF8, 0xF2),
+        "soft2": (0xE5, 0xF1, 0xE7),
+        "card_bg": (0xFF, 0xFF, 0xFF),
+    },
+    "royal": {
+        "primary": (0x9F, 0x1D, 0x1D),        # 中国红（政务/党建）
+        "primary_dark": (0x6E, 0x12, 0x12),
+        "primary_light": (0xD4, 0x6A, 0x6A),
+        "accent": (0xC9, 0x9A, 0x2E),         # 鎏金
+        "soft": (0xFB, 0xF4, 0xF0),
+        "soft2": (0xF7, 0xE8, 0xDE),
+        "card_bg": (0xFF, 0xFF, 0xFF),
+    },
 }
+
+# 主题关键词规则（按优先级顺序匹配，先命中者生效）
+_THEME_RULES = [
+    ("royal", ["党建", "政务", "政府", "廉政", "纪念", "长征", "红色文化"]),
+    ("retro", ["兵工", "军工", "历史", "革命", "抗战", "小镇", "古镇", "遗址", "三线", "文物", "博物馆", "老工业"]),
+    ("forest", ["生态", "自然", "农业", "乡村", "田园", "森林", "绿色", "环保", "景区", "旅游", "文旅"]),
+    ("teal", ["医疗", "健康", "生命", "医药", "生物", "临床"]),
+    ("amber", ["金融", "商业", "投资", "财经", "增长", "市场", "营销"]),
+    ("indigo", ["科技", "AI", "智能", "算法", "数据", "互联网", "数字", "软件", "技术", "系统", "离线"]),
+]
+
+
+def choose_theme(text: str) -> str:
+    """根据任务主题与内容自动选择配色主题；可用 AI_CLIENT_PPT_THEME 显式覆盖。"""
+    env = os.environ.get("AI_CLIENT_PPT_THEME", "").strip().lower()
+    if env and env in THEMES:
+        return env
+    corpus = text[:3000]
+    for name, kws in _THEME_RULES:
+        for kw in kws:
+            if kw.lower() in corpus.lower():
+                return name
+    return "indigo"
 
 INK = (0x0F, 0x17, 0x2A)           # 标题高对比深黑
 INK_LIGHT = (0x33, 0x41, 0x55)     # 正文深灰
@@ -114,8 +164,11 @@ def clean_markdown_artifacts(text: str) -> str:
     t = _MD_TOKENS.sub("", t)
     # 清理行首引用符号
     t = re.sub(r"^>\s*", "", t)
-    # 清理多余序号和项目符
-    t = re.sub(r"^[\s\-*•\d.、)①-⑳]+\s*", "", t)
+    # 清理项目符号 / 破折号
+    t = re.sub(r"^[\s\-*•]+\s*", "", t)
+    # 清理 1~2 位序号（如 "1. " "12、" "③"）；保留 4 位年份（如 1938年）
+    t = re.sub(r"^\d{1,2}[.、)）]\s*", "", t)
+    t = re.sub(r"^[①-⑳]\s*", "", t)
     return t.strip()
 
 
@@ -156,32 +209,48 @@ class SlideSection:
         self.layout_type = self._detect_layout()
 
     def _detect_layout(self) -> str:
+        """根据内容语义智能选择版式（而非只看要点数量）。"""
         if self.images:
             return "image_text"
 
         text_corpus = " ".join(self.bullets)
+        full = self.title + " " + text_corpus
 
-        # 1. 指标亮点数据页 (如 99.8%、300%、5000+、TOP 1)
+        # 1. 金句 / 愿景 / 使命（单条短句，或标题命中）
+        if len(self.bullets) == 1 and len(self.bullets[0]) <= 24:
+            return "quote"
+        if any(k in self.title for k in ("愿景", "使命", "理念", "口号", "目标", "展望")):
+            return "quote"
+
+        # 2. 时间线 / 历史沿革
+        if any(k in self.title for k in ("历史", "历程", "沿革", "大事记", "时间线", "发展", "演进", "里程碑", "征程")):
+            return "timeline"
+        if len(re.findall(r"\b(?:19|20)\d{2}\s*年", full)) >= 2:
+            return "timeline"
+
+        # 3. 指标亮点数据页
         metric_matches = re.findall(r"(\d+(?:\.\d+)?%|\d+[xX倍]|\d+\+|\bTOP\s*\d+\b|\d{2,}\s*万?)", text_corpus)
         if len(metric_matches) >= 2 and len(self.bullets) <= 4:
             return "stat_cards"
 
-        # 2. 流程流转步骤页 (步骤、阶段、Step、流程)
+        # 4. 流程步骤页
         step_matches = [b for b in self.bullets if re.search(r"^(?:步骤|阶段|Step|Phase|\d+[.、)])", b, re.IGNORECASE)]
         if len(step_matches) >= 2 and len(self.bullets) <= 4:
             return "process_steps"
 
-        # 3. 恰好 4 项：使用极具专业感的 2x2 四宫格卡片矩阵
+        # 5. 双栏对比（两条要点，或内容命中对比词）
+        if len(self.bullets) == 2:
+            return "comparison"
+
+        # 6. 四宫格聚焦矩阵
         if len(self.bullets) == 4:
             return "quad_grid"
 
-        # 4. 2 或 3 项：三列/双栏立体特色卡片
+        # 7. 多列立体卡片
         if len(self.bullets) in (2, 3):
             return "column_cards"
 
         return "standard_cards"
-
-
 def parse_and_paginate_markdown(text: str, base_dir: Path | None = None) -> tuple[str, str, list[SlideSection]]:
     """解析 Markdown 并执行严格的分页限制：单页要点不超过 4 条。"""
     deck_title = "演示文稿"
@@ -325,6 +394,12 @@ def generate_lively_speaker_script(
         parts.append(f"我们先看一组直观的数据，它最能说明《{title}》带来的实际成效。")
     elif layout_type == "process_steps":
         parts.append(f"在落地路径上，《{title}》被拆成了几个环环相扣的阶段，我们依次来看。")
+    elif layout_type == "timeline":
+        parts.append(f"让我们沿着时间脉络，回顾《{title}》一路走来的关键节点。")
+    elif layout_type == "comparison":
+        parts.append(f"这里我们把两种思路放在一起对照，优劣差异一目了然。")
+    elif layout_type == "quote":
+        parts.append(f"接下来这句话，凝聚了我们在《{title}》上最核心的追求。")
     else:
         openers = [
             f"接下来看《{title}》，这是本次方案里非常关键的一环。",
@@ -751,6 +826,92 @@ def build_standard_cards(prs, page_no: int, total: int, title: str, bullets: lis
     return slide
 
 
+def build_quote(prs, page_no: int, total: int, title: str, bullets: list[str], theme: dict):
+    """金句/愿景大标题版式：居中大字，极简有力。"""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_header(slide, page_no, total, title, theme)
+
+    statement = bullets[0] if bullets else title
+    size = 36 if len(statement) <= 18 else (30 if len(statement) <= 30 else 24)
+
+    add_shape(slide, 5.45, 1.9, 2.45, 0.08, fill=theme["accent"], radius=0.5)
+    add_text(slide, 1.3, 2.25, 10.73, 2.5, statement, size=size, bold=True, color=INK, align="center", line_spacing=1.35)
+    add_shape(slide, 5.45, 4.95, 2.45, 0.08, fill=theme["accent"], radius=0.5)
+    add_text(slide, 1.3, 5.25, 10.73, 0.6, f"—— {title}", size=15, bold=True, color=theme["primary_dark"], align="center")
+
+    add_footer(slide, page_no, total)
+    return slide
+
+
+def build_timeline(prs, page_no: int, total: int, title: str, bullets: list[str], theme: dict):
+    """横向时间线版式：节点年份 + 上下说明，适合历史沿革/发展历程。"""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_header(slide, page_no, total, title, theme)
+
+    n = max(min(len(bullets), 5), 2)
+    y_line = 3.75
+    xs = [1.1 + i * (11.1 / max(n - 1, 1)) for i in range(n)]
+
+    add_shape(slide, 1.0, y_line, 11.3, 0.045, fill=theme["primary_light"], shape="rect")
+
+    for i, (x, b) in enumerate(zip(xs, bullets[:n])):
+        p_title, p_desc = extract_point_parts(b)
+        node_fill = theme["primary"] if i % 2 == 0 else theme["accent"]
+        add_shape(slide, x - 0.17, y_line - 0.15, 0.36, 0.36, fill=node_fill, shape="oval")
+        add_text(slide, x - 1.05, y_line - 1.55, 2.1, 0.5, p_title, size=15, bold=True, color=INK, align="center")
+        add_text(slide, x - 1.1, y_line + 0.4, 2.2, 1.5, p_desc, size=11.5, color=INK_LIGHT, align="center", line_spacing=1.25)
+
+    add_footer(slide, page_no, total)
+    return slide
+
+
+def build_comparison(prs, page_no: int, total: int, title: str, bullets: list[str], theme: dict):
+    """双栏对比版式：左右两栏 + 中间 VS，用于优劣/方案对比。"""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_header(slide, page_no, total, title, theme)
+
+    left_b = bullets[0] if len(bullets) > 0 else ""
+    right_b = bullets[1] if len(bullets) > 1 else ""
+
+    col_w = 5.55
+    x1, x2 = 0.8, 7.0
+    top, h = 1.7, 4.55
+
+    add_shape(slide, x1, top, col_w, h, fill=theme["soft"], radius=0.14)
+    add_shape(slide, x1, top, col_w, 0.08, fill=theme["primary_light"], shape="rect")
+    l_title, l_desc = extract_point_parts(left_b)
+    add_text(slide, x1 + 0.3, top + 0.35, col_w - 0.6, 0.7, l_title or "方案 A", size=20, bold=True, color=theme["primary_light"], line_spacing=1.2)
+    add_shape(slide, x1 + 0.3, top + 1.2, 1.0, 0.04, fill=theme["primary_light"], shape="rect")
+    add_text(slide, x1 + 0.3, top + 1.45, col_w - 0.6, h - 1.7, l_desc, size=13, color=INK_LIGHT, line_spacing=1.4)
+
+    add_shape(slide, x2, top, col_w, h, fill=theme["card_bg"], line=theme["primary"], line_w=1.5, radius=0.14)
+    add_shape(slide, x2, top, col_w, 0.08, fill=theme["primary"], shape="rect")
+    r_title, r_desc = extract_point_parts(right_b)
+    add_text(slide, x2 + 0.3, top + 0.35, col_w - 0.6, 0.7, r_title or "方案 B", size=20, bold=True, color=theme["primary_dark"], line_spacing=1.2)
+    add_shape(slide, x2 + 0.3, top + 1.2, 1.0, 0.04, fill=theme["accent"], shape="rect")
+    add_text(slide, x2 + 0.3, top + 1.45, col_w - 0.6, h - 1.7, r_desc, size=13, color=INK_LIGHT, line_spacing=1.4)
+
+    add_shape(slide, 6.08, top + 1.85, 0.9, 0.9, fill=theme["primary"], shape="oval")
+    add_text(slide, 6.08, top + 2.08, 0.9, 0.5, "VS", size=16, bold=True, color=WHITE, align="center")
+
+    add_footer(slide, page_no, total)
+    return slide
+
+
+def alternate_layout(layout: str, sec) -> str:
+    """版式去重：若连续两页撞版式，换成另一种适配该页内容的版式。"""
+    n = len(sec.bullets)
+    if layout == "quad_grid":
+        return "column_cards" if n <= 3 else "standard_cards"
+    if layout == "column_cards":
+        return "standard_cards"
+    if layout == "standard_cards":
+        return "quad_grid" if n == 4 else "column_cards"
+    if layout == "process_steps":
+        return "quad_grid" if n == 4 else "standard_cards"
+    # timeline / comparison / quote / stat_cards / image_text 内容特殊，保持原版式
+    return layout
+
 def build_end(prs, theme: dict, total: int):
     """封底页：大气总结致谢。"""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
@@ -779,8 +940,7 @@ def quick_markdown_pptx(text: str, out_path: Path) -> Path:
     from pptx import Presentation
     from pptx.util import Inches
 
-    theme_name = os.environ.get("AI_CLIENT_PPT_THEME", "indigo").lower()
-    theme = THEMES.get(theme_name, THEMES["indigo"])
+    theme = THEMES[choose_theme(text)]
 
     deck_title, subtitle, sections = parse_and_paginate_markdown(text, base_dir=out_path.parent)
 
@@ -806,10 +966,14 @@ def quick_markdown_pptx(text: str, out_path: Path) -> Path:
             "核心目录概览", [s.title for s in sections[:4]], "catalog", cur_page, total_pages, deck_title
         )
 
-    # 3. 逐页生成核心内容
+    # 3. 逐页生成核心内容（内容感知版式 + 连续去重，避免单调）
+    prev_layout = None
     for sec in sections:
         cur_page += 1
         layout = sec.layout_type
+        if layout == prev_layout:
+            layout = alternate_layout(layout, sec)
+        prev_layout = layout
 
         if layout == "quad_grid":
             slide = build_quad_grid(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
@@ -819,6 +983,12 @@ def quick_markdown_pptx(text: str, out_path: Path) -> Path:
             slide = build_stat_cards(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
         elif layout == "process_steps":
             slide = build_process_steps(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
+        elif layout == "timeline":
+            slide = build_timeline(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
+        elif layout == "comparison":
+            slide = build_comparison(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
+        elif layout == "quote":
+            slide = build_quote(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
         elif layout == "column_cards":
             slide = build_column_cards(prs, cur_page, total_pages, sec.title, sec.bullets, theme)
         else:
