@@ -2,6 +2,7 @@
 """Build publication-grade White Paper HTML, compile vector PDF via LibreOffice,
 and generate the corresponding PPTX presentation deck.
 """
+import base64
 import os
 import shutil
 import subprocess
@@ -29,10 +30,13 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 def build_whitepaper_html() -> Path:
     html_file = OUTPUT_DIR / "ai_client_whitepaper.html"
 
-    # Absolute asset paths for LibreOffice HTML rendering
+    # Base64 embedded assets for 100% self-contained LibreOffice vector PDF compilation
     def asset_uri(name: str) -> str:
         p = (ASSETS_DIR / name).resolve()
-        return p.as_uri()
+        if not p.exists():
+            raise FileNotFoundError(f"Whitepaper asset not found: {p}")
+        b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
 
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -512,7 +516,7 @@ def build_whitepaper_html() -> Path:
 </ol>
 
 <div class="figure-box">
-  <img src="{asset_uri('ui_task_detail.png')}" alt="任务执行详情与产物交付界面">
+  <img src="{asset_uri('ui_task_detail.png')}" alt="任务执行详情与产物交付界面" width="600">
   <div class="figure-caption">图 3-1：AI-Client 任务执行全景图（展示思维规划、工具调用、状态流转与交付卡片）</div>
 </div>
 
@@ -522,7 +526,7 @@ def build_whitepaper_html() -> Path:
 </div>
 
 <div class="figure-box">
-  <img src="{asset_uri('ui_step_merge.png')}" alt="相同步骤合并与状态诊断">
+  <img src="{asset_uri('ui_step_merge.png')}" alt="相同步骤合并与状态诊断" width="600">
   <div class="figure-caption">图 3-2：相同步骤合并前后对比与执行状态智能标识</div>
 </div>
 
@@ -546,7 +550,7 @@ def build_whitepaper_html() -> Path:
 </p>
 
 <div class="figure-box">
-  <img src="{asset_uri('ppt_slide_preview.png')}" alt="ppt-master 演示文稿排版实拍">
+  <img src="{asset_uri('ppt_slide_preview.png')}" alt="ppt-master 演示文稿排版实拍" width="600">
   <div class="figure-caption">图 4-1：ppt-master 演示文稿生成实机效果（层次分明、高对比重点大字、优雅现代）</div>
 </div>
 
@@ -570,19 +574,19 @@ def build_whitepaper_html() -> Path:
 
 <div class="grid-2">
   <div class="figure-box" style="margin: 8px 0;">
-    <img src="{asset_uri('ppt_quad_grid.png')}" alt="四宫格聚焦矩阵">
+    <img src="{asset_uri('ppt_quad_grid.png')}" alt="四宫格聚焦矩阵" width="280">
     <div class="figure-caption">四宫格聚焦矩阵 (Quad Grid)</div>
   </div>
   <div class="figure-box" style="margin: 8px 0;">
-    <img src="{asset_uri('ppt_stat_cards.png')}" alt="36pt 数据亮点卡片">
+    <img src="{asset_uri('ppt_stat_cards.png')}" alt="36pt 数据亮点卡片" width="280">
     <div class="figure-caption">36pt 数据亮点卡片 (Stat Cards)</div>
   </div>
   <div class="figure-box" style="margin: 8px 0;">
-    <img src="{asset_uri('ppt_steps.png')}" alt="横向流程流转步骤">
+    <img src="{asset_uri('ppt_steps.png')}" alt="横向流程流转步骤" width="280">
     <div class="figure-caption">横向流程步骤图 (Process Steps)</div>
   </div>
   <div class="figure-box" style="margin: 8px 0;">
-    <img src="{asset_uri('ppt_columns.png')}" alt="三列立体特色卡片">
+    <img src="{asset_uri('ppt_columns.png')}" alt="三列立体特色卡片" width="280">
     <div class="figure-caption">三列立体特色卡片 (Column Cards)</div>
   </div>
 </div>
@@ -618,7 +622,7 @@ def build_whitepaper_html() -> Path:
 </p>
 
 <div class="figure-box">
-  <img src="{asset_uri('ui_plugins.png')}" alt="插件与技能生态中心">
+  <img src="{asset_uri('ui_plugins.png')}" alt="插件与技能生态中心" width="600">
   <div class="figure-caption">图 5-1：AI-Client 离线插件与技能中心（支持 SKILL.md 动态导入与运行时自检）</div>
 </div>
 
@@ -791,8 +795,11 @@ def generate_presentation_deck() -> Path:
     print(f"[Presentation] 成功写入 PPT 大纲 Markdown: {md_file.name}")
 
     out_pptx = OUTPUT_DIR / "ai_client_presentation.pptx"
-    quick_markdown_pptx(deck_md, out_pptx)
-    print(f"[Presentation] 成功编译高质量 16:9 演示文稿: {out_pptx.name}")
+    try:
+        quick_markdown_pptx(deck_md, out_pptx)
+        print(f"[Presentation] 成功编译高质量 16:9 演示文稿: {out_pptx.name}")
+    except PermissionError:
+        print(f"[Presentation] 提示: {out_pptx.name} 当前已被外部软件（如 Office/WPS）打开锁定，跳过覆盖，保留现有生成版本。")
     return out_pptx
 
 
