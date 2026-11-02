@@ -21,14 +21,196 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "plugins/ppt-master"))
 
 from run import quick_markdown_pptx
+from PIL import Image, ImageDraw, ImageFont
 
 ASSETS_DIR = ROOT_DIR / "docs/whitepaper/assets"
 OUTPUT_DIR = ROOT_DIR / "docs/whitepaper"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def generate_architecture_graphic() -> Path:
+    """Generate high-DPI crisp architecture topology diagram."""
+    out_path = ASSETS_DIR / "arch_topology.png"
+    WIDTH = 1920
+    HEIGHT = 1260
+
+    im = Image.new("RGBA", (WIDTH, HEIGHT), (248, 250, 252, 255))
+    draw = ImageDraw.Draw(im)
+
+    font_title = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 36)
+    font_subtitle = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 20)
+    font_layer_badge = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 17)
+    font_layer_title = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 21)
+    font_layer_tag = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 18)
+    font_card_h = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 18)
+    font_card_p = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 14)
+    font_conn = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", 15)
+
+    # Outer Border
+    draw.rounded_rectangle([20, 20, WIDTH - 20, HEIGHT - 20], radius=16, fill=(255, 255, 255, 255), outline=(203, 213, 225, 255), width=2)
+
+    # Header Section
+    draw.text((WIDTH // 2, 55), "AI-Client 分层解耦系统架构与附件运行时协同拓扑全景", fill=(15, 23, 42, 255), font=font_title, anchor="mm")
+    draw.text((WIDTH // 2, 95), "物理断网隔离 · Rust 高可靠中枢 · 开箱即用 Sidecars 运行时总线 · 国产信创全栈闭环", fill=(71, 85, 105, 255), font=font_subtitle, anchor="mm")
+    draw.line([(60, 125), (WIDTH - 60, 125)], fill=(226, 232, 240, 255), width=2)
+
+    layers = [
+        {
+            "num": "层级 01",
+            "title": "客户端表现交互层 (Presentation Layer)",
+            "tag": "极速响应 · 双模式交互 · 平板自适应",
+            "banner_bg": (67, 56, 202),
+            "body_bg": (245, 243, 255),
+            "card_h_color": (79, 70, 229),
+            "cards": [
+                ("React 18 现代化任务工作台", "TypeScript + Vite 毫秒级响应，实时任务流与动态状态树树状追踪，目标驱动推进"),
+                ("Tauri v2 跨平台桌面外壳", "Rust 宿主轻量化深度绑定，常驻内存 < 80MB，原生桌面窗体控制，物理隔绝外网外联"),
+                ("PWA 渐进式离线应用支持", "集成 Service Worker 离线清单，支持鸿蒙平板/信创移动终端在物理断网下免安装独立运行"),
+            ],
+            "conn_text": "↕  高效 IPC 二进制通信通道 (Tauri Command / JSON-RPC 异步事件流)  ↕",
+            "conn_bg": (224, 231, 255),
+            "conn_border": (165, 180, 252),
+            "conn_text_color": (55, 48, 163),
+        },
+        {
+            "num": "层级 02",
+            "title": "核心执行引擎层 (Core Engine Layer · Rust 原生强安全中枢)",
+            "tag": "强类型安全 · 零内存泄漏 · 零 GC 停顿",
+            "banner_bg": (3, 105, 161),
+            "body_bg": (240, 249, 255),
+            "card_h_color": (2, 132, 199),
+            "cards": [
+                ("自主 ReAct Agent 调度中枢", "规划执行闭环：意图深度解析 → 目标任务拆解 → 沙箱工具并发调用 → 结果多维反思自检"),
+                ("相同步骤智能合并 (Step Collapsing)", "自研拓扑折叠算法，聚合连续同名工具日志，消除界面刷屏噪音，同时支持微观展开调试"),
+                ("人文化诊断 & 免API离线直出兜底", "智能捕获 402/401 额度异常，提供一键免 API 额度直接调用内置离线引擎生成 PPT 应急通道"),
+                ("SQLite 嵌入式事务存储引擎", "rusqlite 本地事务快照，自动模式迁移，完整审计日志与产物全量本地持久化，断电不丢失"),
+            ],
+            "conn_text": "↕  标准进程沙箱管道总线 (Sidecars Process Bus · 管道输入输出隔离通信)  ↕",
+            "conn_bg": (236, 253, 245),
+            "conn_border": (110, 231, 183),
+            "conn_text_color": (6, 95, 70),
+        },
+        {
+            "num": "层级 03",
+            "title": "附件运行时总线 (Bundled Sidecars Layer · 全离线开箱即用)",
+            "tag": "0 环境配置门槛 · 绿色便携集成",
+            "banner_bg": (4, 120, 87),
+            "body_bg": (236, 253, 245),
+            "card_h_color": (5, 150, 105),
+            "cards": [
+                ("llama.cpp 本地大模型", "自动动态多端口拉起 llama-server，支持 GGUF 量化权重推理，按需动态释放显存"),
+                ("内嵌 Python 3.10+ 运行时", "独立便携沙箱，免配置环境，内置 python-pptx, PyMuPDF, jieba 等全量核心库"),
+                ("LibreOffice 矢量渲染总线", "Headless 无头模式毫秒级转换，输出出版级矢量 PDF，保证文字与排版高保真度"),
+                ("Piper 神经网络语音合成", "纯离线 zh_CN 自然中英文混读发音人，演说级生动情感语气，秒级流式直出"),
+                ("FFmpeg 音画编解码中枢", "逐页播放时长精确毫秒级对齐，极清帧流式转码，合成高质量 1080P/60FPS MP4 视频"),
+            ],
+            "conn_text": "↕  操作系统系统调用与底层硬件指令集优化 (Direct System Calls & CPU SIMD)  ↕",
+            "conn_bg": (254, 243, 199),
+            "conn_border": (252, 211, 77),
+            "conn_text_color": (146, 64, 14),
+        },
+        {
+            "num": "层级 04",
+            "title": "数据安全沙箱与信创生态底座 (Security & Domestic Base)",
+            "tag": "自主可控 · 国产软硬件全生态兼容",
+            "banner_bg": (180, 83, 9),
+            "body_bg": (255, 251, 235),
+            "card_h_color": (217, 119, 6),
+            "cards": [
+                ("物理断网安全沙箱", "100% 数据闭环宿主机内存，严格阻断外部未授权网络请求，守住涉密资产绝不出域红线"),
+                ("国产信创操作系统全面适配", "银河麒麟 (KylinOS V10)、统信 UOS、中科方德 原生 deb/rpm/AppImage 便携桌面封装"),
+                ("国产芯片架构原生编译", "龙芯 LoongArch64、飞腾 Phytium、华为鲲鹏 ARM64、海光 x86 等多架构 LLVM 原生优化"),
+            ],
+            "conn_text": None,
+        },
+    ]
+
+    start_y = 145
+    layer_h = 220
+    spacing = 58
+    card_margin = 12
+
+    for idx, layer in enumerate(layers):
+        ly_top = start_y + idx * (layer_h + spacing)
+        ly_bottom = ly_top + layer_h
+        lx_left = 45
+        lx_right = WIDTH - 45
+
+        draw.rounded_rectangle([lx_left, ly_top, lx_right, ly_bottom], radius=10, fill=layer["body_bg"], outline=(203, 213, 225, 255), width=1)
+
+        banner_h = 42
+        draw.rounded_rectangle([lx_left, ly_top, lx_right, ly_top + banner_h], radius=10, fill=layer["banner_bg"])
+        draw.rectangle([lx_left, ly_top + banner_h - 10, lx_right, ly_top + banner_h], fill=layer["banner_bg"])
+
+        badge_w = 75
+        badge_h = 26
+        bx = lx_left + 15
+        by = ly_top + (banner_h - badge_h) // 2
+        draw.rounded_rectangle([bx, by, bx + badge_w, by + badge_h], radius=13, fill=(255, 255, 255, 240))
+        draw.text((bx + badge_w // 2, by + badge_h // 2), layer["num"], fill=layer["banner_bg"], font=font_layer_badge, anchor="mm")
+
+        draw.text((bx + badge_w + 15, ly_top + banner_h // 2), layer["title"], fill=(255, 255, 255, 255), font=font_layer_title, anchor="lm")
+        draw.text((lx_right - 20, ly_top + banner_h // 2), layer["tag"], fill=(255, 255, 255, 220), font=font_layer_tag, anchor="rm")
+
+        cards = layer["cards"]
+        num_cards = len(cards)
+        cards_area_top = ly_top + banner_h + 10
+        cards_area_bottom = ly_bottom - 10
+        total_w = (lx_right - lx_left) - 2 * card_margin
+        gap = 12
+        card_w = (total_w - (num_cards - 1) * gap) / num_cards
+
+        for c_i, (c_title, c_desc) in enumerate(cards):
+            cx1 = lx_left + card_margin + c_i * (card_w + gap)
+            cx2 = cx1 + card_w
+            cy1 = cards_area_top
+            cy2 = cards_area_bottom
+
+            draw.rounded_rectangle([cx1, cy1, cx2, cy2], radius=8, fill=(255, 255, 255, 255), outline=(226, 232, 240, 255), width=1)
+            draw.rounded_rectangle([cx1, cy1, cx1 + 4, cy2], radius=2, fill=layer["card_h_color"])
+            draw.text((cx1 + 14, cy1 + 22), c_title, fill=layer["card_h_color"], font=font_card_h, anchor="lm")
+
+            def wrap_text(text, font, max_width):
+                lines = []
+                curr = ""
+                for char in text:
+                    test = curr + char
+                    bbox = font.getbbox(test)
+                    if bbox[2] - bbox[0] <= max_width:
+                        curr = test
+                    else:
+                        lines.append(curr)
+                        curr = char
+                if curr:
+                    lines.append(curr)
+                return lines
+
+            p_lines = wrap_text(c_desc, font_card_p, card_w - 28)
+            py = cy1 + 48
+            for line in p_lines[:5]:
+                draw.text((cx1 + 14, py), line, fill=(71, 85, 105, 255), font=font_card_p, anchor="lm")
+                py += 23
+
+        if layer["conn_text"]:
+            conn_y = ly_bottom + spacing // 2
+            conn_h = 32
+            cw = 860
+            cx1 = (WIDTH - cw) // 2
+            cx2 = cx1 + cw
+            draw.rounded_rectangle([cx1, conn_y - conn_h // 2, cx2, conn_y + conn_h // 2], radius=16, fill=layer["conn_bg"], outline=layer["conn_border"], width=1)
+            draw.text((WIDTH // 2, conn_y), layer["conn_text"], fill=layer["conn_text_color"], font=font_conn, anchor="mm")
+
+    im.save(out_path, "PNG", optimize=True)
+    print(f"[Assets] 架构拓扑高清矢量图生成成功: {out_path.name}")
+    return out_path
 
 
 def build_whitepaper_html() -> Path:
     html_file = OUTPUT_DIR / "ai_client_whitepaper.html"
+
+    # Ensure architecture diagram graphic is generated
+    generate_architecture_graphic()
 
     # Base64 embedded assets for 100% self-contained LibreOffice vector PDF compilation
     def asset_uri(name: str) -> str:
@@ -46,7 +228,7 @@ def build_whitepaper_html() -> Path:
 <style>
   @page {{
     size: A4 portrait;
-    margin: 14mm 16mm 14mm 16mm;
+    margin: 12mm 16mm 12mm 16mm;
     @bottom-center {{
       content: "AI-Client 全离线智能体工作站技术白皮书 | 第 " counter(page) " 页";
       font-size: 8pt;
@@ -60,7 +242,7 @@ def build_whitepaper_html() -> Path:
 
   body {{
     font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Roboto, "PingFang SC", sans-serif;
-    line-height: 1.48;
+    line-height: 1.5;
     color: #1e293b;
     background-color: #ffffff;
     font-size: 8.8pt;
@@ -79,64 +261,66 @@ def build_whitepaper_html() -> Path:
     break-inside: avoid;
   }}
 
-  /* Cover Page */
-  .cover-container {{
-    padding-top: 50px;
-    padding-bottom: 20px;
+  /* ==================== 封面页大气视觉样式 ==================== */
+  .cover-wrapper {{
+    padding-top: 30px;
+    padding-bottom: 10px;
     text-align: center;
     page-break-inside: avoid;
     break-inside: avoid;
   }}
 
-  .cover-badge {{
+  .cover-header-pill {{
     display: inline-block;
-    padding: 4px 14px;
-    font-size: 9.5pt;
-    font-weight: 700;
-    color: #4f46e5;
-    background: #eef2ff;
-    border: 1px solid #c7d2fe;
+    padding: 5px 20px;
+    font-size: 10pt;
+    font-weight: 800;
+    color: #312e81;
+    background: #e0e7ff;
+    border: 1.5px solid #818cf8;
     border-radius: 9999px;
+    margin-bottom: 22px;
+    letter-spacing: 1px;
+  }}
+
+  .cover-hero-title {{
+    font-size: 28pt;
+    font-weight: 900;
+    color: #0f172a;
+    line-height: 1.2;
+    margin: 0 0 10px 0;
+    letter-spacing: -0.5px;
+  }}
+
+  .cover-sub-brand {{
+    font-size: 16pt;
+    font-weight: 800;
+    color: #4338ca;
     margin-bottom: 18px;
     letter-spacing: 0.5px;
   }}
 
-  .cover-title {{
-    font-size: 24pt;
-    font-weight: 800;
-    color: #0f172a;
-    line-height: 1.25;
-    margin: 0 0 12px 0;
-    letter-spacing: -0.5px;
-  }}
-
-  .cover-subtitle {{
-    font-size: 11.5pt;
+  .cover-hero-tagline {{
+    font-size: 11pt;
     color: #475569;
-    max-width: 620px;
-    margin: 0 auto 18px auto;
-    line-height: 1.45;
-  }}
-
-  .cover-desc {{
-    font-size: 9.5pt;
-    color: #64748b;
+    max-width: 650px;
+    margin: 0 auto 24px auto;
+    line-height: 1.55;
     font-weight: 500;
-    margin-bottom: 26px;
   }}
 
   .cover-meta-table {{
-    width: 92%;
-    margin: 0 auto 30px auto;
+    width: 94%;
+    margin: 0 auto 26px auto;
     border-collapse: collapse;
-    border: 1px solid #e2e8f0;
+    border: 1.5px solid #cbd5e1;
     background: #f8fafc;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 8.5pt;
   }}
 
   .cover-meta-table td {{
-    padding: 9px 12px;
+    padding: 9px 14px;
     border: 1px solid #e2e8f0;
     text-align: left;
     color: #475569;
@@ -146,14 +330,59 @@ def build_whitepaper_html() -> Path:
     color: #0f172a;
   }}
 
-  /* Executive Highlight Box */
+  /* 封面 3 大指标卡片 */
+  .cover-metrics-table {{
+    width: 94%;
+    margin: 0 auto 24px auto;
+    border-collapse: separate;
+    border-spacing: 10px;
+    border: none;
+  }}
+
+  .cover-metrics-table td {{
+    vertical-align: top;
+    border: none;
+    padding: 0;
+    width: 33.33%;
+  }}
+
+  .cover-metric-card {{
+    background: #ffffff;
+    border: 1.5px solid #c7d2fe;
+    border-radius: 8px;
+    padding: 12px 10px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(79, 70, 229, 0.06);
+  }}
+
+  .cover-metric-val {{
+    font-size: 20pt;
+    font-weight: 900;
+    color: #4338ca;
+    line-height: 1.1;
+  }}
+
+  .cover-metric-title {{
+    font-size: 9pt;
+    font-weight: 700;
+    color: #1e1b4b;
+    margin: 4px 0 2px 0;
+  }}
+
+  .cover-metric-sub {{
+    font-size: 7.5pt;
+    color: #64748b;
+    line-height: 1.35;
+  }}
+
+  /* ==================== 执行摘要与目录样式 ==================== */
   .exec-summary {{
     background: #f8fafc;
     border: 1px solid #cbd5e1;
     border-left: 5px solid #4f46e5;
     padding: 12px 16px;
     border-radius: 6px;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
     page-break-inside: avoid;
     break-inside: avoid;
   }}
@@ -175,13 +404,13 @@ def build_whitepaper_html() -> Path:
     margin-bottom: 0;
   }}
 
-  /* Table of Contents */
+  /* Table of Contents - 100% 对齐与优雅点线 */
   .toc-box {{
     background: #ffffff;
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-    padding: 12px 16px;
-    margin-bottom: 14px;
+    border: 1.5px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin-bottom: 12px;
     page-break-inside: avoid;
     break-inside: avoid;
   }}
@@ -198,35 +427,52 @@ def build_whitepaper_html() -> Path:
   .toc-table {{
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
     margin: 0;
     font-size: 8.5pt;
   }}
 
-  .toc-table tr td {{
-    border: none !important;
-    padding: 4.5px 0 !important;
-    background: transparent !important;
+  .toc-table col.col-name {{
+    width: 84%;
   }}
 
-  .toc-name {{
+  .toc-table col.col-page {{
+    width: 16%;
+  }}
+
+  .toc-table tr td {{
+    border: none !important;
+    padding: 5px 0 !important;
+    background: transparent !important;
+    vertical-align: bottom;
+  }}
+
+  .toc-cell-name {{
+    border-bottom: 1px dotted #94a3b8 !important;
+    text-align: left;
     white-space: nowrap;
+    overflow: hidden;
+  }}
+
+  .toc-cell-name span {{
+    background: #ffffff;
+    padding-right: 6px;
     color: #1e293b;
   }}
 
-  .toc-leader {{
+  .toc-cell-page {{
     border-bottom: 1px dotted #94a3b8 !important;
-    width: 100%;
-    height: 0;
-    padding: 0 6px !important;
-  }}
-
-  .toc-page {{
     text-align: right;
     white-space: nowrap;
-    font-weight: 700;
+  }}
+
+  .toc-cell-page span {{
+    background: #ffffff;
+    padding-left: 6px;
+    font-weight: 800;
     color: #4f46e5;
     font-family: Consolas, monospace;
-    padding-left: 8px !important;
+    font-size: 9pt;
   }}
 
   /* Headings */
@@ -313,31 +559,6 @@ def build_whitepaper_html() -> Path:
     line-height: 1.38;
   }}
 
-  /* Data Metric Card */
-  .metric-card {{
-    text-align: center;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    padding: 8px;
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }}
-
-  .metric-num {{
-    font-size: 16pt;
-    font-weight: 800;
-    color: #4f46e5;
-    line-height: 1.1;
-  }}
-
-  .metric-label {{
-    font-size: 7.8pt;
-    font-weight: 600;
-    color: #64748b;
-    margin-top: 2px;
-  }}
-
   /* Tables */
   table.data-table {{
     width: 100%;
@@ -380,7 +601,7 @@ def build_whitepaper_html() -> Path:
     border: 1px solid #e2e8f0;
   }}
 
-  /* Image Figure Box */
+  /* Image Figure Box - 保证绝不变形 (100% 原始宽高比匹配) */
   .figure-box {{
     margin: 6px auto;
     border: 1px solid #cbd5e1;
@@ -404,85 +625,6 @@ def build_whitepaper_html() -> Path:
     font-weight: 600;
     color: #475569;
     background: #f1f5f9;
-  }}
-
-  /* Architecture Diagram Styles */
-  .arch-container {{
-    border: 1px solid #cbd5e1;
-    border-radius: 6px;
-    padding: 5px 7px;
-    background: #ffffff;
-    margin: 4px 0;
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }}
-
-  .arch-layer {{
-    border: 1px solid #cbd5e1;
-    border-radius: 5px;
-    padding: 4px 5px;
-    margin-bottom: 3px;
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }}
-
-  .arch-title-bar {{
-    width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 2px;
-  }}
-
-  .arch-title-bar td {{
-    border: none;
-    padding: 0;
-    background: transparent;
-  }}
-
-  .arch-badge-num {{
-    display: inline-block;
-    padding: 1px 4px;
-    color: #ffffff;
-    border-radius: 3px;
-    font-size: 7.2pt;
-    font-weight: 700;
-    margin-right: 4px;
-  }}
-
-  .arch-cards-table {{
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 3px;
-    margin: 0;
-  }}
-
-  .arch-card-td {{
-    background: #ffffff;
-    border: 1px solid #e2e8f0;
-    border-radius: 4px;
-    padding: 3px 5px;
-    vertical-align: top;
-  }}
-
-  .arch-card-h {{
-    font-weight: 700;
-    font-size: 7.5pt;
-    margin-bottom: 1px;
-  }}
-
-  .arch-card-p {{
-    font-size: 6.6pt;
-    color: #475569;
-    margin: 0;
-    line-height: 1.25;
-  }}
-
-  .arch-conn {{
-    text-align: center;
-    color: #64748b;
-    font-size: 6.6pt;
-    font-weight: bold;
-    margin: 1px 0;
-    letter-spacing: 0.5px;
   }}
 
   /* Callouts */
@@ -527,15 +669,13 @@ def build_whitepaper_html() -> Path:
 </head>
 <body>
 
-<!-- ==================== 第 01 页：白皮书正式封面 ==================== -->
-<div class="cover-container avoid-break">
-  <div class="cover-badge">★ 2026 企业级高安全与全离线智能体标杆工程</div>
-  <div class="cover-title">AI-Client 离线智能体工作站</div>
-  <div class="cover-subtitle">
-    全离线自主可控 · 原生 DrawingML 矢量演示文稿 · 音画同步口播视频 · 国产信创全生态适配
-  </div>
-  <div class="cover-desc">
-    产品功能全景深度剖析与工程实现技术白皮书（Release v2.0）
+<!-- ==================== 第 01 页：白皮书正式大气封面 ==================== -->
+<div class="cover-wrapper avoid-break">
+  <div class="cover-header-pill">★ 2026 企业级高安全与全离线智能体标杆工程 · 官方技术白皮书</div>
+  <div class="cover-hero-title">AI-Client 智能体工作站</div>
+  <div class="cover-sub-brand">全离线端侧生产力中枢 · 完整产品功能手册</div>
+  <div class="cover-hero-tagline">
+    物理隔离绝不出域 · 原生 DrawingML 矢量演示文稿 · 智能音画同步口播成片 · 国产信创全生态适配
   </div>
 
   <table class="cover-meta-table">
@@ -544,44 +684,52 @@ def build_whitepaper_html() -> Path:
       <td style="width: 50%;"><strong>运行模式：</strong>物理隔离 / 100% 纯本地运行</td>
     </tr>
     <tr>
+      <td><strong>核心定位：</strong>党政涉密 / 国防军工 / 金融核心 / 工业制造</td>
+      <td><strong>数据安全性：</strong>物理级端侧闭环，核心数据零出域</td>
+    </tr>
+    <tr>
       <td><strong>适配架构：</strong>x86_64 / ARM64 / 龙芯 LoongArch / 鲲鹏 / 飞腾</td>
       <td><strong>操作系统：</strong>Windows / macOS / 银河麒麟 / 统信 UOS / 方德</td>
     </tr>
     <tr>
       <td><strong>发布版本：</strong>Enterprise Release v2.0 (全自包含安装版)</td>
-      <td><strong>发布日期：</strong>2026 年技术发布版</td>
+      <td><strong>发布日期：</strong>2026 年技术官方发布版</td>
     </tr>
   </table>
 
-  <table class="layout-table" style="width: 92%; margin: 0 auto;">
+  <table class="cover-metrics-table">
     <tr>
-      <td style="width: 33.3%;">
-        <div class="metric-card">
-          <div class="metric-num">100%</div>
-          <div class="metric-label">全本地离线运算 · 核心资产零外流</div>
+      <td>
+        <div class="cover-metric-card">
+          <div class="cover-metric-val">100%</div>
+          <div class="cover-metric-title">物理隔离绝不出域</div>
+          <div class="cover-metric-sub">模型权重、思维推理与文件生成均闭环在宿主机本地内存</div>
         </div>
       </td>
-      <td style="width: 33.3%;">
-        <div class="metric-card">
-          <div class="metric-num">0 配置</div>
-          <div class="metric-label">内嵌完整工具链 · 用户解压即用</div>
+      <td>
+        <div class="cover-metric-card">
+          <div class="cover-metric-val">0 配置</div>
+          <div class="cover-metric-title">解压即用免配环境</div>
+          <div class="cover-metric-sub">内嵌完整 Python、LibreOffice、FFmpeg 与 Piper 语音</div>
         </div>
       </td>
-      <td style="width: 33.4%;">
-        <div class="metric-card">
-          <div class="metric-num">原生矢量</div>
-          <div class="metric-label">DrawingML 排版 · 100% 自由二次编辑</div>
+      <td>
+        <div class="cover-metric-card">
+          <div class="cover-metric-val">原生矢量</div>
+          <div class="cover-metric-title">DrawingML 自由微调</div>
+          <div class="cover-metric-sub">告别死板截图拼贴，文字卡片在 Office/WPS 中均可二次精修</div>
         </div>
       </td>
     </tr>
   </table>
+  <div style="font-size: 8pt; color: #94a3b8; font-weight: 500;">AI-Client Core Engineering Team · All Rights Reserved</div>
 </div>
 
 <!-- ==================== 第 02 页：执行摘要与目录大纲 ==================== -->
 <h1 class="section-title" style="margin-top: 0;">执行摘要与目录大纲 (Executive Summary & Contents)</h1>
 
 <div class="exec-summary">
-  <h3>✦ 执行摘要 (Executive Summary)</h3>
+  <h3>【执行摘要】 Executive Summary</h3>
   <p>
     随着生成式人工智能向各行各业深度渗透，政务涉密、国防军工、金融核心与高端工业制造领域面临着前所未有的<strong>「数据主权与物理断网安全」</strong>矛盾：公网大模型存在不可控的敏感资产出域泄密风险；常规离线工具部署极其繁重、依赖复杂；开源生成式 PPT 方案大多采用不可二次编辑的“图片拼贴”，且配音视频制作成本高昂。
   </p>
@@ -593,51 +741,47 @@ def build_whitepaper_html() -> Path:
 <div class="toc-box">
   <div class="toc-title">目 录 (Table of Contents)</div>
   <table class="toc-table">
+    <colgroup>
+      <col class="col-name">
+      <col class="col-page">
+    </colgroup>
     <tr>
-      <td class="toc-name"><strong>执行摘要 (Executive Summary)</strong> · 全景价值与核心指标</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 02 页</td>
+      <td class="toc-cell-name"><span><strong>执行摘要 (Executive Summary)</strong> · 全景价值与核心指标</span></td>
+      <td class="toc-cell-page"><span>第 02 页</span></td>
     </tr>
     <tr>
-      <td class="toc-name"><strong>第一章：产品定位与核心痛点破局</strong> · 涉密安全与四大约束解耦</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 03 页</td>
+      <td class="toc-cell-name"><span><strong>第一章：产品定位与核心痛点破局</strong> · 涉密安全与四大约束解耦</span></td>
+      <td class="toc-cell-page"><span>第 03 页</span></td>
     </tr>
     <tr>
-      <td class="toc-name"><strong>第二章：顶层设计与分层技术架构</strong> · 四层解耦架构与 Rust 强安全中枢</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 04 页</td>
+      <td class="toc-cell-name"><span><strong>第二章：顶层设计与分层技术架构</strong> · 四层解耦架构与 Rust 强安全中枢</span></td>
+      <td class="toc-cell-page"><span>第 04 页</span></td>
     </tr>
     <tr>
-      <td class="toc-name"><strong>第三章：核心功能模块深度解析（图文全览）</strong> · 智能步骤合并与离线编排</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 05 页</td>
+      <td class="toc-cell-name"><span><strong>第三章：核心功能模块深度解析（图文全览）</strong> · 智能步骤合并与离线编排</span></td>
+      <td class="toc-cell-page"><span>第 05 页</span></td>
     </tr>
     <tr>
-      <td class="toc-name"><strong>第四章：原生矢量演示文稿与智能口播视频引擎</strong> · DrawingML 排版与演说级配音</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 07 页</td>
+      <td class="toc-cell-name"><span><strong>第四章：原生矢量演示文稿与智能口播视频引擎</strong> · DrawingML 排版与演说级配音</span></td>
+      <td class="toc-cell-page"><span>第 07 页</span></td>
     </tr>
     <tr>
-      <td class="toc-name"><strong>第五章：插件与技能生态体系 (SKILL.md)</strong> · 运行时环境自检与动态装配</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 09 页</td>
+      <td class="toc-cell-name"><span><strong>第五章：插件与技能生态体系 (SKILL.md)</strong> · 运行时环境自检与动态装配</span></td>
+      <td class="toc-cell-page"><span>第 09 页</span></td>
     </tr>
     <tr>
-      <td class="toc-name"><strong>第六章：国产信创生态与跨平台适配全景</strong> · 麒麟/统信/龙芯/鲲鹏全生态</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 10 页</td>
+      <td class="toc-cell-name"><span><strong>第六章：国产信创生态与跨平台适配全景</strong> · 麒麟/统信/龙芯/鲲鹏全生态</span></td>
+      <td class="toc-cell-page"><span>第 10 页</span></td>
     </tr>
     <tr>
-      <td class="toc-name"><strong>第七章：总结与展望</strong> · 筑造坚不可摧的政企自主可控数智化基座</td>
-      <td class="toc-leader"></td>
-      <td class="toc-page">第 11 页</td>
+      <td class="toc-cell-name"><span><strong>第七章：总结与展望</strong> · 筑造坚不可摧的政企自主可控数智化基座</span></td>
+      <td class="toc-cell-page"><span>第 11 页</span></td>
     </tr>
   </table>
 </div>
 
-<div class="callout callout-info" style="margin-top: 10px;">
-  <strong>✦ 白皮书阅读指引：</strong>
+<div class="callout callout-info" style="margin-top: 8px;">
+  <strong>【白皮书阅读指引】</strong>
   本手册系统剖析 AI-Client 的离线运行中枢、原生矢量排版体系、音画同步口播流水线及国产信创底座。读者可根据上方目录各章节编号，精准翻阅对应的技术方案与落地指引。
 </div>
 
@@ -704,7 +848,7 @@ def build_whitepaper_html() -> Path:
 </table>
 
 <div class="callout callout-info">
-  <strong>✦ 破局核心总结：</strong>
+  <strong>【破局核心总结】</strong>
   AI-Client 并非简单的大模型外壳封装，而是一套将<strong>端侧算力、自动化工作流、原生文档排版与多媒体渲染</strong>深度融合的单机自主可控生产力系统，彻底打破“能看不能改”、“机械读稿”、“断网即瘫痪”的三重困境。
 </div>
 
@@ -715,139 +859,11 @@ def build_whitepaper_html() -> Path:
   AI-Client 采用高内聚、松耦合的<strong>「分层解耦架构」</strong>。核心引擎与表现层彻底分离，既能作为单机桌面软件运行，亦支持在无显示设备的服务器/信创节点中以 Headless 无头模式运行。
 </p>
 
-<!-- 现代化全彩卡片式架构图 -->
-<div class="arch-container">
-  <!-- 层级 01 -->
-  <div class="arch-layer" style="border-left: 4px solid #4f46e5; background: #f5f3ff;">
-    <table class="arch-title-bar">
-      <tr>
-        <td style="text-align: left; font-weight: 800; font-size: 8pt; color: #4338ca;">
-          <span class="arch-badge-num" style="background: #4f46e5;">层级 01</span>客户端表现交互层 (Presentation Layer)
-        </td>
-        <td style="text-align: right; font-size: 7pt; color: #4f46e5;">轻量响应 · 双模式交互</td>
-      </tr>
-    </table>
-    <table class="arch-cards-table">
-      <tr>
-        <td class="arch-card-td" style="width: 33.3%;">
-          <div class="arch-card-h" style="color: #4f46e5;">React 18 现代化工作台</div>
-          <p class="arch-card-p">TypeScript + Vite 响应式，支持实时任务流与动态状态树可视化。</p>
-        </td>
-        <td class="arch-card-td" style="width: 33.3%;">
-          <div class="arch-card-h" style="color: #4f46e5;">Tauri v2 跨平台桌面壳</div>
-          <p class="arch-card-p">Rust 宿主轻量化深度绑定，常驻内存 &lt; 80MB，物理隔绝云端外联。</p>
-        </td>
-        <td class="arch-card-td" style="width: 33.4%;">
-          <div class="arch-card-h" style="color: #4f46e5;">PWA 离线应用支持</div>
-          <p class="arch-card-p">集成 Service Worker，支持鸿蒙/信创平板在断网环境下脱网免安装运行。</p>
-        </td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="arch-conn">↕ 高效 IPC 二进制通信通道 (Tauri Command / JSON-RPC 异步事件流) ↕</div>
-
-  <!-- 层级 02 -->
-  <div class="arch-layer" style="border-left: 4px solid #0284c7; background: #f0f9ff;">
-    <table class="arch-title-bar">
-      <tr>
-        <td style="text-align: left; font-weight: 800; font-size: 8pt; color: #0369a1;">
-          <span class="arch-badge-num" style="background: #0284c7;">层级 02</span>核心执行引擎层 (Core Engine Layer · Rust 原生强安全中枢)
-        </td>
-        <td style="text-align: right; font-size: 7pt; color: #0284c7;">高可靠 · 零内存泄漏</td>
-      </tr>
-    </table>
-    <table class="arch-cards-table">
-      <tr>
-        <td class="arch-card-td" style="width: 25%;">
-          <div class="arch-card-h" style="color: #0284c7;">自主 Agent 调度</div>
-          <p class="arch-card-p">ReAct 循环：意图解析 &rarr; 任务拆解 &rarr; 工具调用 &rarr; 反思校验。</p>
-        </td>
-        <td class="arch-card-td" style="width: 25%;">
-          <div class="arch-card-h" style="color: #0284c7;">步骤智能合并器</div>
-          <p class="arch-card-p">Step Collapsing 聚合连续同名日志，消除视觉噪音。</p>
-        </td>
-        <td class="arch-card-td" style="width: 25%;">
-          <div class="arch-card-h" style="color: #0284c7;">人文化诊断 & 免API</div>
-          <p class="arch-card-p">识别 402/401 额度异常，提供一键切换离线直出 PPT 通道。</p>
-        </td>
-        <td class="arch-card-td" style="width: 25%;">
-          <div class="arch-card-h" style="color: #0284c7;">SQLite 事务存储</div>
-          <p class="arch-card-p">本地持久化任务快照、审计日志与产物索引，断电不丢。</p>
-        </td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="arch-conn">↕ 标准进程沙箱管道总线 (Sidecars Process Bus) ↕</div>
-
-  <!-- 层级 03 -->
-  <div class="arch-layer" style="border-left: 4px solid #059669; background: #ecfdf5;">
-    <table class="arch-title-bar">
-      <tr>
-        <td style="text-align: left; font-weight: 800; font-size: 8pt; color: #047857;">
-          <span class="arch-badge-num" style="background: #059669;">层级 03</span>附件运行时总线 (Bundled Sidecars Layer · 全离线开箱即用)
-        </td>
-        <td style="text-align: right; font-size: 7pt; color: #059669;">0 环境依赖 · 绿色便携</td>
-      </tr>
-    </table>
-    <table class="arch-cards-table">
-      <tr>
-        <td class="arch-card-td" style="width: 20%;">
-          <div class="arch-card-h" style="color: #059669;">llama.cpp 引擎</div>
-          <p class="arch-card-p">自动拉起本地 GGUF 推理，按需释放显存。</p>
-        </td>
-        <td class="arch-card-td" style="width: 20%;">
-          <div class="arch-card-h" style="color: #059669;">内嵌 Python 3.10+</div>
-          <p class="arch-card-p">免配置环境，内置 python-pptx, PyMuPDF 等。</p>
-        </td>
-        <td class="arch-card-td" style="width: 20%;">
-          <div class="arch-card-h" style="color: #059669;">LibreOffice 总线</div>
-          <p class="arch-card-p">Headless 模式高保真矢量转换输出出版级 PDF。</p>
-        </td>
-        <td class="arch-card-td" style="width: 20%;">
-          <div class="arch-card-h" style="color: #059669;">Piper 神经网络语音</div>
-          <p class="arch-card-p">纯离线 zh_CN 自然中英文混读发音人。</p>
-        </td>
-        <td class="arch-card-td" style="width: 20%;">
-          <div class="arch-card-h" style="color: #059669;">FFmpeg 音画中枢</div>
-          <p class="arch-card-p">毫秒级逐页对齐合成专业高画质 MP4 视频。</p>
-        </td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="arch-conn">↕ 操作系统系统调用与硬件指令集抽象 ↕</div>
-
-  <!-- 层级 04 -->
-  <div class="arch-layer" style="border-left: 4px solid #d97706; background: #fffbeb;">
-    <table class="arch-title-bar">
-      <tr>
-        <td style="text-align: left; font-weight: 800; font-size: 8pt; color: #b45309;">
-          <span class="arch-badge-num" style="background: #d97706;">层级 04</span>数据安全沙箱与信创生态底座 (Security & Domestic Platform Base)
-        </td>
-        <td style="text-align: right; font-size: 7pt; color: #d97706;">自主可控 · 信创全适配</td>
-      </tr>
-    </table>
-    <table class="arch-cards-table">
-      <tr>
-        <td class="arch-card-td" style="width: 33.3%;">
-          <div class="arch-card-h" style="color: #d97706;">物理断网安全沙箱</div>
-          <p class="arch-card-p">100% 数据不出域，禁止外部未授权网络调用，符合涉密与金融强监管合规。</p>
-        </td>
-        <td class="arch-card-td" style="width: 33.3%;">
-          <div class="arch-card-h" style="color: #d97706;">国产信创操作系统</div>
-          <p class="arch-card-p">银河麒麟 (KylinOS V10)、统信 UOS、中科方德 原生 deb/rpm/AppImage 包。</p>
-        </td>
-        <td class="arch-card-td" style="width: 33.4%;">
-          <div class="arch-card-h" style="color: #d97706;">国产芯片原生编译</div>
-          <p class="arch-card-p">龙芯 LoongArch64、飞腾 Phytium、华为鲲鹏、海光 x86 等多架构原生指令支持。</p>
-        </td>
-      </tr>
-    </table>
-  </div>
+<!-- 鲜明、清晰、结构化的架构拓扑全景图 (保证 100% 原始长宽比，绝不变形) -->
+<div class="figure-box" style="width: 520px;">
+  <img src="{asset_uri('arch_topology.png')}" alt="AI-Client 分层解耦系统架构与附件运行时协同拓扑全景图" width="520" height="341">
+  <div class="figure-caption">图 2-1：AI-Client 核心系统分层架构与附件运行时协同拓扑全景图</div>
 </div>
-<div class="figure-caption" style="text-align: center; margin-top: -2px; margin-bottom: 5px;">图 2-1：AI-Client 分层系统架构与附件运行时协同拓扑</div>
 
 <h2 class="subsection-title">2.1 为什么选择 Rust 构建核心引擎？</h2>
 <ul>
@@ -870,8 +886,9 @@ def build_whitepaper_html() -> Path:
   <li><strong>阶段 4/4（交付总结与产物归档）</strong>：归纳产物清单，提供后续编辑建议与本地打开通道。</li>
 </ol>
 
-<div class="figure-box" style="width: 440px;">
-  <img src="{asset_uri('ui_task_detail.png')}" alt="任务执行详情与产物交付界面" width="440" height="230">
+<!-- 保证 1024x720 原始比例 (455x320) -->
+<div class="figure-box" style="width: 455px;">
+  <img src="{asset_uri('ui_task_detail.png')}" alt="任务执行详情与产物交付界面" width="455" height="320">
   <div class="figure-caption">图 3-1：AI-Client 目标驱动型任务工作台全景（展示规划推进、状态流转与产物交付卡片）</div>
 </div>
 
@@ -885,8 +902,9 @@ def build_whitepaper_html() -> Path:
   传统智能体在处理批处理操作或多步重试时，UI 往往被刷入几十条重复的“调用工具”与“工具返回”日志，导致关键业务结论被严重淹没。AI-Client 在前端 <code>LogViewer</code> 组件中引入了步骤拓扑折叠机制：对同一 Step 内的连续同名工具操作（如连续调用 <code>read_file</code> 或 <code>write_file</code>），系统自动将其折叠聚合为一个整洁的状态卡片，并在徽标上实时显示子操作执行计数（如 <code>read_file (4次操作)</code>），既保持极简视觉，又支持点击展开微观调试。
 </p>
 
-<div class="figure-box" style="width: 460px;">
-  <img src="{asset_uri('ui_step_merge.png')}" alt="相同步骤合并与状态诊断" width="460" height="85">
+<!-- 保证 1024x168 原始比例 (488x80) -->
+<div class="figure-box" style="width: 488px;">
+  <img src="{asset_uri('ui_step_merge.png')}" alt="相同步骤合并与状态诊断" width="488" height="80">
   <div class="figure-caption">图 3-2：相同步骤智能合并算法执行实拍（消除多重工具重复调用噪音）</div>
 </div>
 
@@ -908,8 +926,9 @@ def build_whitepaper_html() -> Path:
   与市场上大部分“将 HTML/Markdown 截图贴进 PPT”的假课件工具不同，AI-Client 内置的原生矢量演示文稿引擎生成的是<strong>100% 原生矢量 DrawingML 幻灯片</strong>。文档中的每个矩形卡片、圆角高光底板、立体阴影、文本框与字号层级，在 Microsoft PowerPoint、WPS Office 或 LibreOffice 中均可自由选中、移动、换色或修改文字。
 </p>
 
-<div class="figure-box" style="width: 440px;">
-  <img src="{asset_uri('ppt_slide_preview.png')}" alt="原生矢量演示文稿排版实拍" width="440" height="202">
+<!-- 保证 1024x470 原始比例 (458x210) -->
+<div class="figure-box" style="width: 458px;">
+  <img src="{asset_uri('ppt_slide_preview.png')}" alt="原生矢量演示文稿排版实拍" width="458" height="210">
   <div class="figure-caption">图 4-1：原生矢量演示文稿生成实机效果（层次分明、高对比重点大字、优雅现代）</div>
 </div>
 
@@ -928,25 +947,34 @@ def build_whitepaper_html() -> Path:
   引擎通过语义解析输入文本的结构特征，自适应调度最佳视觉容器组件：
 </p>
 
-<table style="width: 100%; border-collapse: separate; border-spacing: 6px; margin: 3px 0 6px 0; border: none; page-break-inside: avoid; break-inside: avoid;">
+<!-- 保证 1467x825 原始比例 (224x126) 绝不变形 -->
+<table class="layout-table" style="margin: 3px 0 6px 0; border: none; page-break-inside: avoid; break-inside: avoid;">
   <tr>
-    <td style="border: 1px solid #cbd5e1; border-radius: 5px; padding: 3px; background: #f8fafc; text-align: center; width: 50%;">
-      <img src="{asset_uri('ppt_quad_grid.png')}" alt="四宫格聚焦矩阵" width="220" height="124" style="display: block; margin: 0 auto;">
-      <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding: 2px 0;">四宫格聚焦矩阵 (4 要点矩阵)</div>
+    <td style="width: 50%; text-align: center;">
+      <div class="card" style="padding: 4px; text-align: center;">
+        <img src="{asset_uri('ppt_quad_grid.png')}" alt="四宫格聚焦矩阵" width="224" height="126" style="display: block; margin: 0 auto;">
+        <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding-top: 3px;">四宫格聚焦矩阵 (4 要点矩阵)</div>
+      </div>
     </td>
-    <td style="border: 1px solid #cbd5e1; border-radius: 5px; padding: 3px; background: #f8fafc; text-align: center; width: 50%;">
-      <img src="{asset_uri('ppt_stat_cards.png')}" alt="36pt 数据亮点卡片" width="220" height="124" style="display: block; margin: 0 auto;">
-      <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding: 2px 0;">36pt 超大数值亮点卡片</div>
+    <td style="width: 50%; text-align: center;">
+      <div class="card" style="padding: 4px; text-align: center;">
+        <img src="{asset_uri('ppt_stat_cards.png')}" alt="36pt 数据亮点卡片" width="224" height="126" style="display: block; margin: 0 auto;">
+        <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding-top: 3px;">36pt 超大数值亮点卡片</div>
+      </div>
     </td>
   </tr>
   <tr>
-    <td style="border: 1px solid #cbd5e1; border-radius: 5px; padding: 3px; background: #f8fafc; text-align: center; width: 50%;">
-      <img src="{asset_uri('ppt_steps.png')}" alt="横向流程流转步骤" width="220" height="124" style="display: block; margin: 0 auto;">
-      <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding: 2px 0;">横向流程流转步骤图</div>
+    <td style="width: 50%; text-align: center;">
+      <div class="card" style="padding: 4px; text-align: center;">
+        <img src="{asset_uri('ppt_steps.png')}" alt="横向流程流转步骤" width="224" height="126" style="display: block; margin: 0 auto;">
+        <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding-top: 3px;">横向流程流转步骤图</div>
+      </div>
     </td>
-    <td style="border: 1px solid #cbd5e1; border-radius: 5px; padding: 3px; background: #f8fafc; text-align: center; width: 50%;">
-      <img src="{asset_uri('ppt_columns.png')}" alt="三列立体特色卡片" width="220" height="124" style="display: block; margin: 0 auto;">
-      <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding: 2px 0;">三列立体特色架构卡片</div>
+    <td style="width: 50%; text-align: center;">
+      <div class="card" style="padding: 4px; text-align: center;">
+        <img src="{asset_uri('ppt_columns.png')}" alt="三列立体特色卡片" width="224" height="126" style="display: block; margin: 0 auto;">
+        <div style="font-size: 7.2pt; font-weight: 700; color: #475569; padding-top: 3px;">三列立体特色架构卡片</div>
+      </div>
     </td>
   </tr>
 </table>
@@ -956,23 +984,20 @@ def build_whitepaper_html() -> Path:
   传统“PPT 转视频”软件最大的硬伤在于直接念读屏幕上的干瘪文字。AI-Client 推行<strong>「屏幕负责要点精简展示，口播负责深度剖析讲解」</strong>的双轨设计：
 </p>
 
-<table style="width: 100%; border-collapse: collapse; margin: 5px 0; background: #eff6ff; border-left: 4px solid #3b82f6; border-radius: 5px;">
-  <tr>
-    <td style="padding: 7px 10px; font-size: 7.8pt; color: #1e40af; line-height: 1.4;">
-      <strong>✦ 演讲家级解说词设计三要素（拒绝机械读 PPT）：</strong><br>
-      <strong>1. 情境代入与痛点设问：</strong>从受众现实痛点切入，建立现场共鸣；<br>
-      <strong>2. 核心逻辑与机理解剖：</strong>对要点进行深层次因果分析与业务价值阐发；<br>
-      <strong>3. 生动口语与情感充沛：</strong>使用自然流畅、富有感染力的现场演说口吻，自动注入演讲者备注（Speaker Notes）。
-    </td>
-  </tr>
-</table>
+<div class="callout callout-info">
+  <div style="font-weight: 700; color: #1e40af; margin-bottom: 4px; font-size: 8.2pt;">【演讲家级解说词设计三要素 · 拒绝照本宣科】</div>
+  <div style="margin-bottom: 2px;"><strong>1. 情境代入与痛点设问：</strong>从受众现实痛点切入，建立现场共鸣与倾听欲望；</div>
+  <div style="margin-bottom: 2px;"><strong>2. 核心逻辑与机理解剖：</strong>对 PPT 要点进行深层次因果剖析与核心业务价值阐发；</div>
+  <div><strong>3. 生动口语与情感充沛：</strong>使用自然流畅、富有感染力的现场演说口吻，自动注入演讲者备注（Speaker Notes）。</div>
+</div>
 
-<div class="card" style="background: #f8fafc; margin-top: 5px;">
+<div class="card" style="background: #f8fafc; margin-top: 6px;">
   <div class="card-header" style="color: #0f172a;">全离线音画同步视频合成流水线</div>
-  <p style="font-size: 7.2pt; color: #334155; line-height: 1.4;">
-    <code>PPTX 矢量文件</code> &rarr; [LibreOffice Headless] &rarr; <code>出版级矢量 PDF</code> &rarr; [PyMuPDF 160DPI 栅格化] &rarr; <code>逐页极清帧图</code><br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&rarr; [演讲者备注提取 &rarr; Piper 神经网络语音合成] &rarr; <code>逐页高保真旁白音频</code><br>
-    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&rarr; [FFmpeg 毫秒级时间戳精确对齐流媒体合成] &rarr; <code>专业高画质 MP4 视频成片</code>
+  <p style="font-size: 7.5pt; color: #334155; line-height: 1.5; margin: 0;">
+    <strong>第一阶段（矢量转换）：</strong>PPTX 幻灯片 &rarr; 调用内置 LibreOffice Headless 导出高保真矢量 PDF；<br>
+    <strong>第二阶段（极清帧提取）：</strong>PyMuPDF 以 160DPI 超高清栅格化逐页生成无损幻灯片图像帧；<br>
+    <strong>第三阶段（神经网络配音）：</strong>提取每页演讲者备注，调用内置 Piper 离线合成演说级高清音频；<br>
+    <strong>第四阶段（毫秒对齐成片）：</strong>调用内置 FFmpeg 精确对齐音画时间戳，一键直出 1080P 高清 MP4 视频。
   </p>
 </div>
 
@@ -983,8 +1008,9 @@ def build_whitepaper_html() -> Path:
   AI-Client 原生兼容开源 <strong>Agent Skill</strong> 规范。系统支持从本地磁盘直接扫描与装载插件，所有启用的插件技能指令与参数规范将自动编译装配至 Agent 系统提示词（System Prompt）中，赋予智能体无限扩展的能力边界。
 </p>
 
-<div class="figure-box" style="width: 480px;">
-  <img src="{asset_uri('ui_plugins.png')}" alt="插件与技能生态中心" width="480" height="52">
+<!-- 保证 1024x103 原始比例 (497x50) 绝不变形 -->
+<div class="figure-box" style="width: 497px;">
+  <img src="{asset_uri('ui_plugins.png')}" alt="插件与技能生态中心" width="497" height="50">
   <div class="figure-caption">图 5-1：AI-Client 离线插件与技能中心（支持 SKILL.md 动态导入与运行时自检）</div>
 </div>
 
@@ -994,7 +1020,7 @@ def build_whitepaper_html() -> Path:
 </p>
 
 <div class="callout callout-success">
-  <strong>✦ 绿色免配置保障：</strong>
+  <strong>【绿色免配置保障】</strong>
   所有依赖项均由安装包自包含携带，软件启动时执行自动化路径探测与端口可用性检查，彻底免除了传统开源项目冗长且易失败的环境配置过程。
 </div>
 
