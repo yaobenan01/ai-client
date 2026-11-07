@@ -29,10 +29,15 @@ function FetchWithFallback($urls, $dest) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
   }
   $ProgressPreference = 'SilentlyContinue'
+  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
   foreach ($url in $urls) {
     try {
       Write-Host "==> 下载 $url" -ForegroundColor Cyan
-      Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+      if ($curl) {
+        & $curl.Source -fL --retry 3 --retry-delay 2 -s -S -o $dest $url
+      } else {
+        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+      }
       if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 1000)) {
         Write-Host "==> 下载成功: $url ($([math]::Round((Get-Item $dest).Length / 1MB, 2)) MB)" -ForegroundColor Green
         return
@@ -70,7 +75,12 @@ if ($Ffmpeg) {
   if (-not (Test-Path $destExe)) {
     Write-Host "==> 准备 FFmpeg..." -ForegroundColor Cyan
     $zip = "$env:TEMP\ffmpeg-release-essentials.zip"
-    Fetch "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" $zip
+    $ffUrls = @(
+      "https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip",
+      "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+      "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    )
+    FetchWithFallback $ffUrls $zip
     $tempExtract = "$env:TEMP\ffmpeg_unpack"
     if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
     New-Item -ItemType Directory -Force -Path $tempExtract | Out-Null
@@ -103,8 +113,11 @@ if ($LibreOffice) {
     Write-Host "==> 准备 LibreOffice..." -ForegroundColor Cyan
     $msi = "$env:TEMP\libreoffice.msi"
     $loUrls = @(
-      "https://download.documentfoundation.org/libreoffice/stable/26.8.0/win/x86_64/LibreOffice_26.8.0_Win_x86-64.msi",
-      "https://mirrors.ustc.edu.cn/tdf/libreoffice/stable/26.8.0/win/x86_64/LibreOffice_26.8.0_Win_x86-64.msi"
+      "https://download.documentfoundation.org/libreoffice/stable/26.8.2/win/x86_64/LibreOffice_26.8.2_Win_x86-64.msi",
+      "https://mirrors.ustc.edu.cn/tdf/libreoffice/stable/26.8.2/win/x86_64/LibreOffice_26.8.2_Win_x86-64.msi",
+      "https://download.documentfoundation.org/libreoffice/stable/26.8.1/win/x86_64/LibreOffice_26.8.1_Win_x86-64.msi",
+      "https://archive.documentfoundation.org/libreoffice/old/26.8.2.1/win/x86_64/LibreOffice_26.8.2.1_Win_x86-64.msi",
+      "https://archive.documentfoundation.org/libreoffice/old/26.8.0.3/win/x86_64/LibreOffice_26.8.0.3_Win_x86-64.msi"
     )
     FetchWithFallback $loUrls $msi
     $target = "$env:TEMP\lo_unpack"
@@ -149,7 +162,10 @@ if ($Piper) {
   if (-not (Test-Path $modelDest)) {
     try {
       Write-Host "==> 准备 Piper 中文模型权重..." -ForegroundColor Cyan
-      Fetch "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx" $modelDest
+      FetchWithFallback @(
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx",
+        "https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx"
+      ) $modelDest
     } catch {
       Write-Warning "下载 Piper 模型失败: $_"
     }
@@ -157,7 +173,10 @@ if ($Piper) {
   if (-not (Test-Path $jsonDest)) {
     try {
       Write-Host "==> 准备 Piper 中文模型配置..." -ForegroundColor Cyan
-      Fetch "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json" $jsonDest
+      FetchWithFallback @(
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json",
+        "https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json"
+      ) $jsonDest
     } catch {
       Write-Warning "下载 Piper 模型配置失败: $_"
     }
