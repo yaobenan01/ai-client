@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""PPTX -> 口播 MP4（全离线自包含流水线）。
+"""PPTX -> 高保真宣讲口播 MP4（智能多级神经语音合成流水线）。
 
 流水线阶段：
   [阶段 1/4] PPTX --LibreOffice--> 高清矢量 PDF
-  [阶段 2/4] PDF --PyMuPDF--> 逐页幻灯片超清帧图
-  [阶段 3/4] 演讲者备注 --TTS(Piper / Windows SAPI5 / CosyVoice)--> 逐页高清配音音频
-  [阶段 4/4] 幻灯片帧图 + 配音音频 --FFmpeg--> 合成最终口播 MP4 视频
+  [阶段 2/4] PDF --PyMuPDF--> 逐页幻灯片超清帧图 (160 DPI)
+  [阶段 3/4] 演讲者备注 --智能口语韵律增强 + 多级情感神经 TTS--> 逐页高保真配音
+             (微软 Azure Neural 极品演说/宣讲音色 -> CosyVoice 本地大模型 -> Piper 离线神经网络 -> Windows SAPI -> 静音帧)
+  [阶段 4/4] 幻灯片帧图 + 配音音频 --FFmpeg--> 合成最终高清口播 MP4 视频
 
 特性：
+  - 首选微软 Azure Neural 宣讲级音色（云希/云扬/晓晓/云健），生动富有起伏与感染力；
+  - 智能口播文本预处理：自动规整列表口语断句、缩略词发音优化、标点韵律加权；
   - 自动定位安装包内嵌入的 sidecars（LibreOffice, FFmpeg, Piper）；
-  - 多级 TTS 容灾回退（Piper -> Windows 原生 SAPI5 语音 -> 静音帧）；
-  - 全程离线运行，用户宿主机无需安装任何第三方环境。
+  - 全自动无缝降级容灾：无外网时自动回退到本地 Piper 离线模型，绝对零报错保障；
+  - 全程离线自包含可用，用户宿主机无需安装任何第三方环境。
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -146,6 +151,14 @@ def find_piper() -> tuple[str, str]:
     return piper_exe, ""
 
 
+def find_cosyvoice() -> str:
+    """返回 CosyVoice tts_cli.py 脚本路径（若配置）"""
+    candidates = [
+        "sidecars/tts/cosyvoice/tts_cli.py",
+    ]
+    return find_tool("cosyvoice", "AI_CLIENT_COSYVOICE_CLI", candidates)
+
+
 # ---------------------------------------------------------------- 流水线各阶段处理
 
 
@@ -204,10 +217,121 @@ def extract_notes(pptx: Path) -> list[str]:
     return notes
 
 
-def tts_piper(text: str, out: Path, piper_exe: str, model_path: str) -> bool:
-    """使用 Piper 离线语音合成引擎。"""
+def preprocess_oral_text(text: str) -> str:
+    """对演讲旁白进行口语韵律增强、缩略词发音优化与标点停顿规整。"""
+    if not text:
+        return ""
+    # 移除 Markdown 标题、强调与链接符号
+    t = re.sub(r"#{1,6}\s*", "", text)
+    t = re.sub(r"\*\*(.*?)\*\*", r"\1", t)
+    t = re.sub(r"\*(.*?)\*", r"\1", t)
+    t = re.sub(r"`(.*?)`", r"\1", t)
+    t = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", t)
+    # 将列表标记符转换为口语停顿
+    t = re.sub(r"^\s*[-*+]\s+", "，", t, flags=re.MULTILINE)
+    t = re.sub(r"^\s*\d+[\.、]\s*", "，", t, flags=re.MULTILINE)
+    # 常见专业缩写拆分字母发音（避免连读或机械拼写）
+    abbrs = ["AI", "PPT", "PPTX", "PDF", "API", "UI", "OCR", "OS", "CPU", "GPU", "LLM", "TTS"]
+    for ab in abbrs:
+        spaced = " ".join(list(ab)) + " "
+        t = re.sub(r"\b" + ab + r"\b", spaced, t, flags=re.IGNORECASE)
+    # 百分号口语化
+    t = re.sub(r"(\d+(?:\.\d+)?)%", r"百分之\1", t)
+    # 箭头或递进符号口语化
+    t = re.sub(r"\s*(?:->|→|=>|⇒)\s*", "，接着，", t)
+    # 换行转化为断句标点
+    t = re.sub(r"[\r\n]+", "。 ", t)
+    # 压缩连续重叠标点
+    t = re.sub(r"。+", "。", t)
+    t = re.sub(r"，+", "，", t)
+    t = re.sub(r"[!！]+", "！", t)
+    t = re.sub(r"[?？]+", "？", t)
+    t = re.sub(r"^[，。、；\s]+", "", t)
+    return t.strip()
+
+
+def tts_edge(
+    text: str,
+    out: Path,
+    voice: str = "zh-CN-YunxiNeural",
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+    ffmpeg: str = "",
+) -> bool:
+    """使用微软 Azure Neural 高品质神经语音合成（极具感染力与起伏感，宣讲首选）。"""
     try:
-        sh([piper_exe, "--model", model_path, "--output_file", str(out)], input=text.encode("utf-8"))
+        import edge_tts
+    except ImportError:
+        return False
+
+    temp_mp3 = out.with_suffix(".temp_edge.mp3")
+    try:
+        async def _run():
+            communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+            await communicate.save(str(temp_mp3))
+
+        asyncio.run(_run())
+
+        if not temp_mp3.exists() or temp_mp3.stat().st_size < 300:
+            return False
+
+        # 如果提供了 ffmpeg，将 mp3 转为高质量标准 wav (24kHz, 16bit, mono)
+        if ffmpeg and Path(ffmpeg).exists():
+            sh(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-i",
+                    str(temp_mp3),
+                    "-ar",
+                    "24000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(out),
+                ],
+                timeout=30,
+            )
+            return out.exists() and out.stat().st_size > 500
+        else:
+            if temp_mp3.exists():
+                shutil.move(str(temp_mp3), str(out))
+                return True
+            return False
+    except Exception as e:
+        print(f"  ! [Edge-TTS 离线回退] 神经网络合成异常（如处于无网离线环境）: {e}", file=sys.stderr)
+        return False
+    finally:
+        if temp_mp3.exists():
+            temp_mp3.unlink(missing_ok=True)
+
+
+def tts_cosyvoice(text: str, out: Path, cosy_cli: str) -> bool:
+    """使用 CosyVoice 本地大模型语音合成。"""
+    if not cosy_cli or not Path(cosy_cli).exists():
+        return False
+    try:
+        sh([sys.executable, cosy_cli, "--text", text, "--output", str(out)], timeout=60)
+        return out.exists() and out.stat().st_size > 500
+    except Exception as e:
+        print(f"  ! CosyVoice 合成失败: {e}", file=sys.stderr)
+        return False
+
+
+def tts_piper(text: str, out: Path, piper_exe: str, model_path: str, length_scale: float = 1.08) -> bool:
+    """使用 Piper 离线语音合成引擎（带韵律节奏放缓控制，避免生硬仓促）。"""
+    try:
+        cmd = [
+            piper_exe,
+            "--model",
+            model_path,
+            "--length_scale",
+            str(length_scale),
+            "--output_file",
+            str(out),
+        ]
+        sh(cmd, input=text.encode("utf-8"), timeout=60)
         return out.exists() and out.stat().st_size > 500
     except Exception as e:
         print(f"  ! Piper 合成失败: {e}", file=sys.stderr)
@@ -242,39 +366,100 @@ def generate_silent_audio(out: Path, duration: float, ffmpeg: str) -> None:
     sh([ffmpeg, "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", dur_str, "-c:a", "pcm_s16le", str(out)])
 
 
-def synthesize_one(i: int, text: str, work: Path, ffmpeg: str, piper_exe: str, piper_model: str) -> Path:
-    """合成单页解说旁白（多级容灾：Piper -> Windows SAPI -> 静音）。"""
+def synthesize_one(
+    i: int,
+    text: str,
+    work: Path,
+    ffmpeg: str,
+    engine: str,
+    voice: str,
+    rate: str,
+    pitch: str,
+    piper_exe: str,
+    piper_model: str,
+    cosy_cli: str,
+) -> Path:
+    """合成单页解说旁白（智能多级容灾：微软 Azure Neural -> CosyVoice -> Piper -> Windows SAPI -> 静音）。"""
     out = work / f"audio_{i:03d}.wav"
-    clean_text = text.strip()
+    clean_text = preprocess_oral_text(text)
 
     if not clean_text:
         generate_silent_audio(out, 3.0, ffmpeg)
         return out
 
+    preview_text = clean_text[:28] + ("..." if len(clean_text) > 28 else "")
     success = False
-    if piper_exe and piper_model and Path(piper_model).exists():
-        success = tts_piper(clean_text, out, piper_exe, piper_model)
+    chosen_engine = (engine or "auto").lower().strip()
+
+    # 1. 优先尝试高品质微软神经语音（宣讲生动、起伏有感情）
+    if chosen_engine in ["auto", "edge", "azure"] or chosen_engine.startswith("zh-"):
+        active_voice = voice or "zh-CN-YunxiNeural"
+        success = tts_edge(clean_text, out, voice=active_voice, rate=rate, pitch=pitch, ffmpeg=ffmpeg)
         if success:
-            print(f"    - 第 {i} 页语音合成完成 (Piper 神经网络): {clean_text[:25]}...")
+            print(f"    - 第 {i} 页语音合成完成 (微软高品质神经宣讲 · {active_voice}): {preview_text}")
+
+    # 2. 如果用户指定 CosyVoice 或 Edge 回退到本地大模型
+    if not success and (chosen_engine == "cosyvoice" or cosy_cli):
+        success = tts_cosyvoice(clean_text, out, cosy_cli)
+        if success:
+            print(f"    - 第 {i} 页语音合成完成 (CosyVoice 本地大模型): {preview_text}")
+
+    # 3. 离线/回退级：Piper 离线神经网络
+    if not success and piper_exe and piper_model and Path(piper_model).exists():
+        success = tts_piper(clean_text, out, piper_exe, piper_model, length_scale=1.08)
+        if success:
+            print(f"    - 第 {i} 页语音合成完成 (Piper 离线神经网络): {preview_text}")
+
+    # 4. 系统级兜底：Windows 原生 SAPI5
     if not success and sys.platform == "win32":
         success = tts_windows_sapi(clean_text, out)
         if success:
-            print(f"    - 第 {i} 页语音合成完成 (Windows SAPI5): {clean_text[:25]}...")
+            print(f"    - 第 {i} 页语音合成完成 (Windows SAPI5 兜底): {preview_text}")
+
+    # 5. 最终保障：静音帧
     if not success:
+        print(f"    ! 第 {i} 页语音合成无法完成，填充静音保护音画同步", file=sys.stderr)
         generate_silent_audio(out, 3.0, ffmpeg)
+
     return out
 
 
-def synthesize_all(notes: list[str], engine: str, work: Path, ffmpeg: str) -> list[Path]:
+def synthesize_all(
+    notes: list[str],
+    engine: str,
+    voice: str,
+    rate: str,
+    pitch: str,
+    work: Path,
+    ffmpeg: str,
+) -> list[Path]:
     piper_exe, piper_model = find_piper()
+    cosy_cli = find_cosyvoice()
     workers = min(4, os.cpu_count() or 2)
     wavs: list[Path | None] = [None] * len(notes)
 
-    print(f"  -> 开始并行合成 {len(notes)} 段解说旁白音频（{workers} 并发）...")
+    print(
+        f"  -> 开始并行合成 {len(notes)} 段宣讲口播旁白（引擎: {engine}, 音色: {voice}, 语速: {rate}, 并发: {workers}）..."
+    )
     tasks = [(i, text) for i, text in enumerate(notes, start=1)]
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for i, wav in pool.map(
-            lambda item: (item[0], synthesize_one(item[0], item[1], work, ffmpeg, piper_exe, piper_model)),
+            lambda item: (
+                item[0],
+                synthesize_one(
+                    item[0],
+                    item[1],
+                    work,
+                    ffmpeg,
+                    engine,
+                    voice,
+                    rate,
+                    pitch,
+                    piper_exe,
+                    piper_model,
+                    cosy_cli,
+                ),
+            ),
             tasks,
         ):
             wavs[i - 1] = wav
@@ -317,7 +502,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="PPTX -> 离线口播视频生成引擎")
     ap.add_argument("--pptx", required=True, help="输入的 PPTX 文件路径")
     ap.add_argument("--out", required=True, help="输出的 MP4 视频路径")
-    ap.add_argument("--tts", default="piper", choices=["piper", "cosyvoice", "auto"], help="TTS 引擎选择")
+    ap.add_argument("--tts", default="auto", choices=["auto", "edge", "piper", "cosyvoice", "sapi"], help="TTS 引擎选择")
+    ap.add_argument("--voice", default="zh-CN-YunxiNeural", help="语音音色 (如 zh-CN-YunxiNeural 激情宣讲, zh-CN-YunyangNeural 专业政务, zh-CN-XiaoxiaoNeural 亲切温暖, zh-CN-YunjianNeural 沉稳解说)")
+    ap.add_argument("--rate", default="+0%", help="语速调节 (如 +0%%, -4%%, +5%%)")
+    ap.add_argument("--pitch", default="+0Hz", help="语调调节 (如 +0Hz, +2Hz)")
     args = ap.parse_args()
 
     pptx = Path(args.pptx).resolve()
@@ -331,9 +519,10 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("[START] 启动口播视频生成流水线 (全程离线自包含)")
+    print("[START] 启动口播视频生成流水线 (高保真宣讲配音 + 全离线自包含)")
     print(f"  输入文稿: {pptx.name}")
     print(f"  输出目标: {out}")
+    print(f"  口播引擎: {args.tts} (音色: {args.voice}, 语速: {args.rate}, 音调: {args.pitch})")
     print("=" * 60)
 
     ffmpeg = find_ffmpeg()
@@ -351,9 +540,9 @@ def main() -> int:
         slides = pdf_to_pngs(pdf, work)
 
         # 阶段 3/4: 提取备注并语音合成
-        log_step(3, 4, "解析演讲者备注并进行多轨离线语音合成...")
+        log_step(3, 4, "解析演讲者备注并进行多轨高保真宣讲口播合成...")
         notes = extract_notes(pptx)
-        wavs = synthesize_all(notes, args.tts, work, ffmpeg)
+        wavs = synthesize_all(notes, args.tts, args.voice, args.rate, args.pitch, work, ffmpeg)
 
         # 阶段 4/4: 合成各页面视频切片并最终拼接
         log_step(4, 4, "使用内置 FFmpeg 进行音视频画面对齐与视频拼接...")

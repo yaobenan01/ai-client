@@ -14,7 +14,9 @@ export default function PptVideo() {
   )
   const [materialPath, setMaterialPath] = useState('')
   const [pptxInput, setPptxInput] = useState('')
-  const [ttsEngine, setTtsEngine] = useState('cosyvoice')
+  const [ttsEngine, setTtsEngine] = useState('auto')
+  const [voice, setVoice] = useState('zh-CN-YunxiNeural')
+  const [speechRate, setSpeechRate] = useState('+0%')
 
   // Loading & status
   const [directLoading, setDirectLoading] = useState(false)
@@ -65,7 +67,12 @@ export default function PptVideo() {
     setDirectMsg('')
     setDirectError('')
     try {
-      const res = await api.quickRenderVideo({ pptx_path: pptxInput })
+      const res = await api.quickRenderVideo({
+        pptx_path: pptxInput,
+        tts_engine: ttsEngine,
+        voice: voice,
+        rate: speechRate,
+      })
       setDirectMsg(`✓ 成功渲染口播视频：${res.path}`)
       await loadFiles()
     } catch (e: any) {
@@ -95,7 +102,7 @@ export default function PptVideo() {
     try {
       const task = await api.createTask({
         title: 'Agent PPT 转口播视频',
-        input: `请调用 pptx_to_video 工具，将 PPTX 文件 ${pptxInput} 转为带本地旁白的口播 MP4 视频。`,
+        input: `请调用 pptx_to_video 工具，将 PPTX 文件 ${pptxInput} 转为富有感情、生动自然的口播 MP4 视频（音色角色：${voice}，引擎：${ttsEngine}，语速：${speechRate}）。`,
       })
       await api.runTask(task.task.id).catch(() => {})
       nav(`/tasks/${task.task.id}`)
@@ -133,7 +140,7 @@ export default function PptVideo() {
           <span className="arrow">→</span>
           <span className="step">📊 原生可编辑 PPTX</span>
           <span className="arrow">→</span>
-          <span className="step">🎙 本地 TTS (CosyVoice/Piper)</span>
+          <span className="step">🎙 高保真神经宣讲 TTS (云希/晓晓/离线Piper)</span>
           <span className="arrow">→</span>
           <span className="step">🎬 FFmpeg 音画口播 MP4</span>
         </div>
@@ -254,19 +261,57 @@ export default function PptVideo() {
             </div>
 
             <div className="field">
-              <label>离线 TTS 语音引擎</label>
+              <label>宣讲口播音色（生动有感情的语言合成）</label>
               <select
                 className="input"
-                value={ttsEngine}
-                onChange={(e) => setTtsEngine(e.target.value)}
+                value={voice}
+                onChange={(e) => {
+                  setVoice(e.target.value)
+                  if (e.target.value === 'piper') {
+                    setTtsEngine('piper')
+                  }
+                }}
               >
-                <option value="cosyvoice">CosyVoice（高质量中文旁白，推荐）</option>
-                <option value="piper">Piper（轻量级快速模型）</option>
+                <option value="zh-CN-YunxiNeural">🎙️ 云希 · 激情宣讲 / 演说男声（推荐 · 抑扬顿挫极富感染力）</option>
+                <option value="zh-CN-YunyangNeural">🎙️ 云扬 · 专业政务 / 新闻播音男声（沉稳大气、权威端庄）</option>
+                <option value="zh-CN-XiaoxiaoNeural">🎙️ 晓晓 · 温暖亲切 / 知性讲解女声（温润自然、入情入理）</option>
+                <option value="zh-CN-YunjianNeural">🎙️ 云健 · 磁性深沉 / 纪录片解说男声（高级质感、厚重有力）</option>
+                <option value="zh-CN-XiaoyiNeural">🎙️ 晓伊 · 灵动欢快 / 叙事解说女声（节奏明快、生动活泼）</option>
+                <option value="piper">💻 本地 Piper · 华研男声（完全纯离线 · 零网络依赖）</option>
               </select>
             </div>
 
+            <div className="row" style={{ gap: 12 }}>
+              <div className="field" style={{ flex: 1 }}>
+                <label>宣讲语速与节奏</label>
+                <select
+                  className="input"
+                  value={speechRate}
+                  onChange={(e) => setSpeechRate(e.target.value)}
+                >
+                  <option value="-4%">从容沉稳（-4%，适合重要会议/大会宣讲）</option>
+                  <option value="+0%">黄金标准（0%，自然抑扬顿挫）</option>
+                  <option value="+6%">干练明快（+6%，适合快节奏技术汇报）</option>
+                </select>
+              </div>
+
+              <div className="field" style={{ flex: 1 }}>
+                <label>TTS 引擎与容灾机制</label>
+                <select
+                  className="input"
+                  value={ttsEngine}
+                  onChange={(e) => setTtsEngine(e.target.value)}
+                >
+                  <option value="auto">智能双擎（在线优先神经音色 + 离线自动降级 Piper）</option>
+                  <option value="edge">微软高品质神经语音（Azure Neural）</option>
+                  <option value="piper">强制纯本地离线（Piper 神经网络）</option>
+                  <option value="cosyvoice">CosyVoice 本地大模型</option>
+                </select>
+              </div>
+            </div>
+
             <p className="muted" style={{ fontSize: 12, lineHeight: 1.6, margin: '8px 0 16px' }}>
-              流水线将自动提取各页的「演讲者备注 (Notes)」，合成对应音频切片，并通过 LibreOffice 转高清 PNG，由 FFmpeg 完成精准对齐合成。
+              ✦ 智能流水线将自动提取 PPT「演讲者备注 (Notes)」进行口语韵律增强、标点停顿优化，通过高质量神经语音合成配音，并由内置 FFmpeg 完成音画精确对齐。无网络时将全自动无缝降级到本地离线引擎，保障 100% 成功交付。
             </p>
 
             <button className="btn" disabled={directLoading || !pptxInput.trim()}>

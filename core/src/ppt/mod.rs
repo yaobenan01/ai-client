@@ -14,8 +14,9 @@ pub struct PptRuntimeConfig {
     pub ffmpeg_exe: Option<PathBuf>,
     pub piper_exe: Option<PathBuf>,
     pub piper_model: Option<PathBuf>,
-    /// `piper` (lightweight local), `cosyvoice`, or `auto`.
+    /// `auto` (expressive neural with offline fallback), `edge`, `piper`, `cosyvoice`, or `sapi`.
     pub tts_engine: String,
+    pub voice: Option<String>,
 }
 
 impl Default for PptRuntimeConfig {
@@ -27,7 +28,8 @@ impl Default for PptRuntimeConfig {
             ffmpeg_exe: None,
             piper_exe: None,
             piper_model: None,
-            tts_engine: "piper".into(),
+            tts_engine: "auto".into(),
+            voice: Some("zh-CN-YunxiNeural".into()),
         }
     }
 }
@@ -41,6 +43,7 @@ pub struct PptRuntime {
     pub piper_exe: Option<PathBuf>,
     pub piper_model: Option<PathBuf>,
     pub tts_engine: String,
+    pub voice: Option<String>,
 }
 
 impl PptRuntime {
@@ -77,6 +80,7 @@ impl PptRuntime {
             piper_exe,
             piper_model,
             tts_engine: cfg.tts_engine,
+            voice: cfg.voice,
         })
     }
 
@@ -103,8 +107,15 @@ impl PptRuntime {
         newest_pptx(output_dir)
     }
 
-    /// Render a PPTX into a narrated MP4 (offline TTS + FFmpeg).
-    pub fn pptx_to_video(&self, pptx: &Path, output: &Path) -> Result<PathBuf> {
+    /// Render a PPTX into a narrated MP4 (Expressive Neural / Offline TTS + FFmpeg).
+    pub fn pptx_to_video(
+        &self,
+        pptx: &Path,
+        output: &Path,
+        tts_engine: Option<&str>,
+        voice: Option<&str>,
+        rate: Option<&str>,
+    ) -> Result<PathBuf> {
         let script = self.ppt_master_dir.join("render_video.py");
         if !script.exists() {
             return Err(AppError::Ppt(format!("缺少脚本 {}", script.display())));
@@ -112,6 +123,7 @@ impl PptRuntime {
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let engine = tts_engine.unwrap_or(&self.tts_engine);
         let mut cmd = Command::new(&self.python_exe);
         cmd.arg(&script)
             .arg("--pptx")
@@ -119,7 +131,15 @@ impl PptRuntime {
             .arg("--out")
             .arg(output)
             .arg("--tts")
-            .arg(&self.tts_engine);
+            .arg(engine);
+
+        if let Some(v) = voice.or(self.voice.as_deref()) {
+            cmd.arg("--voice").arg(v);
+        }
+        if let Some(r) = rate {
+            cmd.arg("--rate").arg(r);
+        }
+
         // 仅在内置/显式配置时覆盖，避免把脚本已有的环境探测清空。
         if let Some(p) = &self.ffmpeg_exe {
             cmd.env("AI_CLIENT_FFMPEG", p);

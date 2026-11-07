@@ -219,12 +219,15 @@ impl Tool for PptxToVideo {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "pptx_to_video".into(),
-            description: "将 PPTX 演示文稿转为带离线 TTS 演讲者旁白的口播 MP4 视频".into(),
+            description: "将 PPTX 演示文稿转为生动有感情的高清口播 MP4 视频（支持微软 Azure 神经音色与全离线 Piper 容灾）".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "pptx_path": { "type": "string", "description": "PPTX 文件路径" },
-                    "output_path": { "type": "string", "description": "输出的 MP4 文件路径（可选，默认 exports 目录）" }
+                    "output_path": { "type": "string", "description": "输出的 MP4 文件路径（可选，默认 exports 目录）" },
+                    "voice": { "type": "string", "description": "口播音色角色（如 zh-CN-YunxiNeural 激情宣讲, zh-CN-YunyangNeural 专业政务, zh-CN-XiaoxiaoNeural 亲切温暖, zh-CN-YunjianNeural 沉稳解说）" },
+                    "tts_engine": { "type": "string", "description": "TTS 引擎：auto（推荐智能容灾）、edge、piper、cosyvoice、sapi" },
+                    "rate": { "type": "string", "description": "语速微调，如 +0%, -4%, +5%" }
                 },
                 "required": ["pptx_path"]
             }),
@@ -243,9 +246,13 @@ impl Tool for PptxToVideo {
             output_dir.join(format!("{}_{}.mp4", stem, chrono::Utc::now().timestamp()))
         };
 
-        match self.ppt.pptx_to_video(&pptx_path, &output_path) {
+        let tts_engine = args.get("tts_engine").and_then(|v| v.as_str());
+        let voice = args.get("voice").and_then(|v| v.as_str());
+        let rate = args.get("rate").and_then(|v| v.as_str());
+
+        match self.ppt.pptx_to_video(&pptx_path, &output_path, tts_engine, voice, rate) {
             Ok(mp4_path) => Ok(ToolOutput::ok(format!(
-                "✓ 成功生成高清口播视频！\n视频文件: {}\n全离线流水线已完成：LibreOffice 高清矢量渲染 -> PyMuPDF 逐页超清帧提取 -> Piper 本地神经网络语音合成 -> FFmpeg 音画精确对齐合成 MP4。\n用户可在交付产物列表中直接预览或播放。",
+                "✓ 成功生成高清口播视频！\n视频文件: {}\n全流水线已完成：LibreOffice 高清矢量渲染 -> PyMuPDF 逐页超清帧提取 -> 智能口播韵律增强 + 神经高保真语音合成 -> FFmpeg 音画精确对齐合成 MP4。\n用户可在交付产物列表中直接预览或播放。",
                 mp4_path.display()
             ))),
             Err(e) => Ok(ToolOutput::err(format!("生成视频失败: {e}"))),

@@ -213,7 +213,10 @@ async fn quick_generate_pptx(State(core): AppState, Json(body): Json<Value>) -> 
 async fn quick_pptx_to_video(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
     let pptx_path = body["pptx_path"].as_str().unwrap_or_default();
     let output_path = body["output_path"].as_str();
-    let video_path = core.quick_pptx_to_video(pptx_path, output_path)?;
+    let tts_engine = body["tts_engine"].as_str();
+    let voice = body["voice"].as_str();
+    let rate = body["rate"].as_str();
+    let video_path = core.quick_pptx_to_video(pptx_path, output_path, tts_engine, voice, rate)?;
     let rel = video_path
         .strip_prefix(&core.config.workspace_dir)
         .unwrap_or(&video_path)

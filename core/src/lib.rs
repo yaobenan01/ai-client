@@ -830,7 +830,14 @@ impl Core {
         self.ppt.generate_pptx(&input_file, &exports_dir)
     }
 
-    pub fn quick_pptx_to_video(&self, pptx_path: &str, output_path: Option<&str>) -> Result<PathBuf> {
+    pub fn quick_pptx_to_video(
+        &self,
+        pptx_path: &str,
+        output_path: Option<&str>,
+        tts_engine: Option<&str>,
+        voice: Option<&str>,
+        rate: Option<&str>,
+    ) -> Result<PathBuf> {
         let exports_dir = self.config.workspace_dir.join("exports");
         std::fs::create_dir_all(&exports_dir)?;
         let p = PathBuf::from(pptx_path);
@@ -842,7 +849,7 @@ impl Core {
             let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("presentation");
             exports_dir.join(format!("{}_{}.mp4", stem, chrono::Utc::now().timestamp()))
         };
-        self.ppt.pptx_to_video(&src, &out)
+        self.ppt.pptx_to_video(&src, &out, tts_engine, voice, rate)
     }
 
     pub fn list_workspace_files(&self) -> Result<Vec<serde_json::Value>> {
