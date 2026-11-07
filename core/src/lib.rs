@@ -20,7 +20,7 @@ use crate::models::{ModelProfile, ModelRegistry, Provider};
 use crate::plugins::PluginManager;
 use crate::ppt::{PptRuntime, PptRuntimeConfig};
 use crate::storage::Db;
-use crate::tools::{default_registry, ToolContext, ToolRegistry};
+use crate::tools::{ToolContext, ToolRegistry};
 use rusqlite::{params, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -421,7 +421,8 @@ impl Core {
             ffmpeg_exe: detect_ffmpeg_exe(&config),
             piper_exe: detect_piper_exe(&config),
             piper_model: detect_piper_model(&config),
-            tts_engine: "piper".into(),
+            tts_engine: "auto".into(),
+            voice: Some("zh-CN-YunxiNeural".into()),
         })?;
         let ppt_arc = Arc::new(ppt.clone());
         let tools = Arc::new(crate::tools::default_registry_with_ppt(ppt_arc));
