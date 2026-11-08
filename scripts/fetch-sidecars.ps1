@@ -48,6 +48,7 @@ function FetchWithFallback($urls, $dest) {
         }
       } catch {
         Write-Warning "从 $url 下载失败: $_"
+        $global:LASTEXITCODE = 0
       }
     }
     if ($round -lt $rounds) { Start-Sleep -Seconds 5 }
@@ -261,3 +262,6 @@ if ($CosyVoice) {
 }
 
 Write-Host "完成。请核对 sidecars/ 下各运行时是否就绪。" -ForegroundColor Green
+# GitHub Actions 的 pwsh 包装器会依据 $LASTEXITCODE 判定失败；
+# 非致命下载失败（已 warning 处理）不应让整个构建失败。
+exit 0
