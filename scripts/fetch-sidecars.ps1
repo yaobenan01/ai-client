@@ -32,45 +32,55 @@ function FetchWithFallback($urls, $dest) {
   }
   $ProgressPreference = 'SilentlyContinue'
   $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-  foreach ($url in $urls) {
-    try {
-      Write-Host "==> 下载 $url" -ForegroundColor Cyan
-      if ($curl) {
-        & $curl.Source -fL --retry 3 --retry-delay 2 -s -S -o $dest $url
-      } else {
-        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+  $rounds = 3
+  for ($round = 1; $round -le $rounds; $round++) {
+    foreach ($url in $urls) {
+      try {
+        Write-Host "==> 下载 $url (第 $round/$rounds 轮)" -ForegroundColor Cyan
+        if ($curl) {
+          & $curl.Source -fL --retry 5 --retry-delay 3 --retry-all-errors -s -S -o $dest $url
+        } else {
+          Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+        if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 1000)) {
+          Write-Host "==> 下载成功: $url ($([math]::Round((Get-Item $dest).Length / 1MB, 2)) MB)" -ForegroundColor Green
+          return
+        }
+      } catch {
+        Write-Warning "从 $url 下载失败: $_"
       }
-      if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 1000)) {
-        Write-Host "==> 下载成功: $url ($([math]::Round((Get-Item $dest).Length / 1MB, 2)) MB)" -ForegroundColor Green
-        return
-      }
-    } catch {
-      Write-Warning "从 $url 下载失败: $_"
     }
+    if ($round -lt $rounds) { Start-Sleep -Seconds 5 }
   }
   throw "未能从任何镜像源下载成功: $($urls -join ', ')"
 }
-
 function Fetch($url, $dest) {
   FetchWithFallback @($url) $dest
 }
 
-# 1) llama.cpp llama-server
+# 1) llama.cpp llama-server（失败不阻断构建：仅影响本地 GGUF，云端模型仍可用）
 if ($LlamaCpp) {
   $targetExe = "$side\llama.cpp\llama-server.exe"
   if (-not (Test-Path $targetExe)) {
     Write-Host "==> 准备 llama-server..." -ForegroundColor Cyan
     $zip = "$env:TEMP\llama.zip"
-    Fetch "https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip" $zip
-    $targetDir = "$side\llama.cpp"
-    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-    tar -xf $zip -C $targetDir
+    try {
+      FetchWithFallback @(
+        "https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip",
+        "https://ghfast.top/https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip",
+        "https://mirror.ghproxy.com/https://github.com/ggml-org/llama.cpp/releases/download/b4372/llama-b4372-bin-win-avx2-x64.zip"
+      ) $zip
+      $targetDir = "$side\llama.cpp"
+      New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+      tar -xf $zip -C $targetDir
+    } catch {
+      Write-Warning "llama-server 下载失败（不阻断构建，本地 GGUF 模型将不可用）: $_"
+    }
     Remove-Item $zip -Force -ErrorAction SilentlyContinue
   } else {
     Write-Host "llama-server 已存在，跳过拉取。" -ForegroundColor Green
   }
 }
-
 # 2) FFmpeg 静态构建（仅保留 ffmpeg.exe；ffprobe 当前无调用方，且避免重复存放）
 if ($Ffmpeg) {
   $destExe = "$side\media\ffmpeg\bin\ffmpeg.exe"
@@ -203,7 +213,11 @@ if ($PythonStandalone) {
   if (-not (Test-Path $pythonExe)) {
     Write-Host "==> 准备 Python 独立免安装运行时..." -ForegroundColor Cyan
     $pyTar = "$env:TEMP\python-standalone.tar.gz"
-    Fetch "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.10.21%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz" $pyTar
+    FetchWithFallback @(
+      "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.10.21%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.10.21%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "https://mirror.ghproxy.com/https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.10.21%2B20260924-x86_64-pc-windows-msvc-install_only.tar.gz"
+    ) $pyTar
     $dest = "$side\python\runtime"
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     tar -xzf $pyTar -C $dest --strip-components 1
