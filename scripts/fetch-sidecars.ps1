@@ -146,16 +146,29 @@ if ($LibreOffice) {
 }
 
 # 4) Piper TTS（Windows：piper.exe + 基础中文语音模型与配置文件）
+#    注意：Piper 只是离线兜底音色，下载失败不应阻断构建（运行时可用 Edge 神经语音或系统 SAPI）
 if ($Piper) {
   $piperExe = "$side\tts\piper\piper.exe"
   if (-not (Test-Path $piperExe)) {
     Write-Host "==> 准备 Piper TTS..." -ForegroundColor Cyan
-    Fetch "https://github.com/rhasspy/piper/releases/latest/download/piper_windows_amd64.zip" "$env:TEMP\piper.zip"
-    Expand-Archive "$env:TEMP\piper.zip" "$side\tts\piper" -Force
-    if (Test-Path "$side\tts\piper\piper\piper.exe") {
-      Copy-Item "$side\tts\piper\piper\*" "$side\tts\piper\" -Recurse -Force
+    $piperZip = "$env:TEMP\piper.zip"
+    try {
+      FetchWithFallback @(
+        "https://github.com/rhasspy/piper/releases/latest/download/piper_windows_amd64.zip",
+        "https://ghfast.top/https://github.com/rhasspy/piper/releases/latest/download/piper_windows_amd64.zip",
+        "https://mirror.ghproxy.com/https://github.com/rhasspy/piper/releases/latest/download/piper_windows_amd64.zip"
+      ) $piperZip
+      Expand-Archive $piperZip "$side\tts\piper" -Force
+      if (Test-Path "$side\tts\piper\piper\piper.exe") {
+        Copy-Item "$side\tts\piper\piper\*" "$side\tts\piper\" -Recurse -Force
+      }
+    } catch {
+      Write-Warning "Piper 下载/解压失败（不阻断构建，运行时将回退 Edge 神经语音/系统 SAPI）: $_"
     }
-    Remove-Item "$env:TEMP\piper.zip" -Force -ErrorAction SilentlyContinue
+    Remove-Item $piperZip -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path $piperExe)) {
+      Write-Warning "未获取到 Piper 二进制，本次构建跳过内置离线兜底音色。"
+    }
   } else {
     Write-Host "Piper TTS 已存在，跳过拉取。" -ForegroundColor Green
   }
@@ -184,7 +197,6 @@ if ($Piper) {
     }
   }
 }
-
 # 5) Python standalone（免安装，CPython 3.10 + 依赖预置）
 if ($PythonStandalone) {
   $pythonExe = "$side\python\runtime\python.exe"

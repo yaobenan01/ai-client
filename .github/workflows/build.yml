@@ -147,7 +147,14 @@ jobs:
       - name: Generate icons
         run: pnpm --dir desktop tauri icon src-tauri/icons/icon.png
       - name: Tauri build
-        run: pnpm --dir desktop tauri build --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-22.04" ]; then
+            # AppImage 打包需从 GitHub 拉取 AppRun/linuxdeploy，CI 网络常 504；deb/rpm 已覆盖麒麟/UOS
+            pnpm --dir desktop tauri build --target ${{ matrix.target }} --bundles deb,rpm
+          else
+            pnpm --dir desktop tauri build --target ${{ matrix.target }}
+          fi
       - name: List bundle output
         shell: bash
         run: |
