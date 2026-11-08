@@ -137,7 +137,7 @@ impl PptRuntime {
             cmd.arg("--voice").arg(v);
         }
         if let Some(r) = rate {
-            cmd.arg("--rate").arg(r);
+            cmd.arg(format!("--rate={r}"));
         }
 
         // 仅在内置/显式配置时覆盖，避免把脚本已有的环境探测清空。

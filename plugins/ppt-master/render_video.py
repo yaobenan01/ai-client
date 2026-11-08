@@ -506,7 +506,23 @@ def main() -> int:
     ap.add_argument("--voice", default="zh-CN-YunxiNeural", help="语音音色 (如 zh-CN-YunxiNeural 激情宣讲, zh-CN-YunyangNeural 专业政务, zh-CN-XiaoxiaoNeural 亲切温暖, zh-CN-YunjianNeural 沉稳解说)")
     ap.add_argument("--rate", default="+0%", help="语速调节 (如 +0%%, -4%%, +5%%)")
     ap.add_argument("--pitch", default="+0Hz", help="语调调节 (如 +0Hz, +2Hz)")
-    args = ap.parse_args()
+
+    # 规整命令行参数：当 --rate 或 --pitch 传入以 '-' 开头的负值（如 "-4%"、"-2Hz"）时，
+    # 避免 Python argparse 默认将负号误判为未知选项 flag，自动合并为 --rate=-4% / --pitch=-2Hz
+    raw_args = sys.argv[1:]
+    normalized_args = []
+    i = 0
+    while i < len(raw_args):
+        arg = raw_args[i]
+        if arg in ("--rate", "--pitch") and i + 1 < len(raw_args):
+            val = raw_args[i + 1]
+            if not val.startswith("--"):
+                normalized_args.append(f"{arg}={val}")
+                i += 2
+                continue
+        normalized_args.append(arg)
+        i += 1
+    args = ap.parse_args(normalized_args)
 
     pptx = Path(args.pptx).resolve()
     if not pptx.exists():
