@@ -4,6 +4,7 @@ use crate::models::ToolSpec;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 fn arg<'a>(args: &'a Value, key: &str) -> Result<&'a str> {
     args.get(key)

@@ -28,6 +28,8 @@ pub enum AppError {
     Workflow(String),
     #[error("ppt error: {0}")]
     Ppt(String),
+    #[error("internal error: {0}")]
+    Internal(String),
     #[error("unknown error: {0}")]
     Other(String),
 }
