@@ -211,7 +211,7 @@ export default function Tasks() {
       {filteredTasks.length === 0 ? (
         <div className="empty">当前分类下暂无任务，可在上方创建新任务 ✦</div>
       ) : (
-        <div className="grid">
+        <div className="tasks-grid">
           {filteredTasks.map((t) => {
             let artCount = 0
             try {
@@ -223,23 +223,23 @@ export default function Tasks() {
 
             return (
               <div
-                className="card task-card"
+                className="task-card"
                 key={t.id}
                 onClick={() => nav(`/tasks/${t.id}`)}
               >
-                <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
-                  <strong style={{ fontSize: 15 }} className="ellipsis-1">
+                <div className="task-card-header">
+                  <strong className="task-card-title" title={t.title}>
                     {t.title}
                   </strong>
-                  <span className={`badge ${BADGE[t.status] || 'pending'}`}>
+                  <span className={`task-badge ${BADGE[t.status] || 'pending'}`}>
                     <i className="dot" />
                     {BADGE_TEXT[t.status] || t.status}
                   </span>
                 </div>
 
-                <p className="muted task-desc">{t.input}</p>
+                <p className="task-desc" title={t.input}>{t.input}</p>
 
-                <div style={{ margin: '12px 0 6px' }}>
+                <div style={{ margin: '14px 0 10px' }}>
                   <ProgressBar
                     progress={t.progress || (t.status === 'done' ? 100 : 0)}
                     status={t.status}
@@ -247,8 +247,8 @@ export default function Tasks() {
                   />
                 </div>
 
-                <div className="row task-card-foot">
-                  <div className="row" style={{ gap: 6 }}>
+                <div className="task-card-foot">
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     {artCount > 0 && (
                       <span className="artifact-badge">
                         📦 {artCount} 个产物
@@ -259,7 +259,7 @@ export default function Tasks() {
                     </span>
                   </div>
 
-                  <div className="row" style={{ gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button
                       className="card-del-btn"
                       onClick={(e) => deleteTask(t.id, e)}
@@ -267,7 +267,7 @@ export default function Tasks() {
                     >
                       ✕
                     </button>
-                    <span className="muted" style={{ fontSize: 12 }}>详情 →</span>
+                    <span className="muted" style={{ fontSize: 12, fontWeight: 500 }}>详情 →</span>
                   </div>
                 </div>
               </div>
