@@ -1,0 +1,6 @@
+# 纯离线数字人合成核心依赖 (轻量无庞大 PyTorch/Librosa 负担)
+onnxruntime>=1.18.0
+opencv-python-headless>=4.9.0
+numpy>=1.24.0
+Pillow>=10.0.0
+edge-tts>=7.0.0

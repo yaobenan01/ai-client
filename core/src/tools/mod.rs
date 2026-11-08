@@ -88,3 +88,13 @@ pub fn default_registry_with_ppt(ppt: Arc<crate::ppt::PptRuntime>) -> ToolRegist
     r.register(builtin::PptxToVideo { ppt });
     r
 }
+
+/// Registry pre-populated with built-in tools, PPT/video tools, and Digital Human Avatar tools.
+pub fn default_registry_with_ppt_and_avatar(
+    ppt: Arc<crate::ppt::PptRuntime>,
+    avatar: Arc<crate::avatar::AvatarRuntime>,
+) -> ToolRegistry {
+    let mut r = default_registry_with_ppt(ppt);
+    r.register(builtin::AvatarVideoSynthesize { avatar });
+    r
+}

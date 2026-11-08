@@ -61,6 +61,31 @@ export const api = {
   deleteTask: (id: string) => request(`/api/tasks/${id}`, { method: 'DELETE' }),
   quickGeneratePpt: (payload: { input_path?: string; content?: string }) => request<{ ok: boolean; path: string; filename: string }>('/api/ppt/quick-generate', { method: 'POST', body: JSON.stringify(payload) }),
   quickRenderVideo: (payload: { pptx_path: string; output_path?: string; tts_engine?: string; voice?: string; rate?: string }) => request<{ ok: boolean; path: string; filename: string }>('/api/ppt/quick-video', { method: 'POST', body: JSON.stringify(payload) }),
+  listAvatarPresets: () => request<{ ok: boolean; presets: any[] }>('/api/avatar/presets'),
+  renderAvatarVideo: (payload: {
+    mode?: string;
+    avatar_id: string;
+    text: string;
+    voice?: string;
+    rate?: string;
+    background?: string;
+    chroma_key?: boolean;
+    no_subtitles?: boolean;
+    pptx_path?: string;
+    ppt_video_path?: string;
+    pip_pos?: string;
+    pip_style?: string;
+    pip_scale?: number;
+    output_path?: string;
+  }) => request<{
+    ok: boolean;
+    success: boolean;
+    output_path: string;
+    mode: string;
+    avatar_id: string;
+    srt_path?: string;
+    master_audio?: string;
+  }>('/api/avatar/render', { method: 'POST', body: JSON.stringify(payload) }),
   listWorkspaceFiles: () => request<{ files: Array<{ name: string; path: string; ext: string; size: number; modified: number }> }>('/api/workspace/files'),
   // 逐段编码：整段 encodeURIComponent 会把 "/" 编成 %2F，部分网关/反代会 404
   getArtifactUrl: (relPath: string) => {

@@ -260,3 +260,81 @@ impl Tool for PptxToVideo {
     }
 }
 
+pub struct AvatarVideoSynthesize {
+    pub avatar: Arc<crate::avatar::AvatarRuntime>,
+}
+
+#[async_trait]
+impl Tool for AvatarVideoSynthesize {
+    fn name(&self) -> &str {
+        "avatar_video_synthesize"
+    }
+
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "avatar_video_synthesize".into(),
+            description: "生成流畅逼真的纯离线数字人播报视频或 PPT 画中画视频（支持4款精品主播、音律母带对齐与智能字幕）".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "text": { "type": "string", "description": "口播文案内容" },
+                    "avatar_id": { "type": "string", "description": "数字人主播标识，可选: boyang (伯洋), wanqing (婉清), zhiming (志明), xinyue (馨月)" },
+                    "mode": { "type": "string", "enum": ["standalone", "ppt_pip"], "description": "模式: standalone (全屏播报), ppt_pip (PPT画中画陪讲)" },
+                    "pptx_path": { "type": "string", "description": "PPTX 文件路径（画中画模式使用）" },
+                    "voice": { "type": "string", "description": "TTS 音色" },
+                    "rate": { "type": "string", "description": "语速偏置 (如 -4%, +0%, +10%)" },
+                    "background": { "type": "string", "description": "演播厅背景 (如 studio_blue, tech_dark, minimal_white)" }
+                },
+                "required": ["text"]
+            }),
+        }
+    }
+
+    async fn run(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput> {
+        let text_arg = match arg(&args, "text") {
+            Ok(t) => t.to_string(),
+            Err(e) => return Ok(ToolOutput::err(format!("缺少参数: {e}"))),
+        };
+        let avatar_id = args.get("avatar_id").and_then(|v| v.as_str()).unwrap_or("boyang").to_string();
+        let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("standalone").to_string();
+        let voice = args.get("voice").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let rate = args.get("rate").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let background = args.get("background").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let pptx_path = args.get("pptx_path").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        let output_dir = ctx.workspace_dir.join("exports");
+        std::fs::create_dir_all(&output_dir).ok();
+        let filename = format!("avatar_{}_{}_{}.mp4", avatar_id, mode, chrono::Utc::now().timestamp());
+        let out_path = output_dir.join(filename);
+
+        let req = crate::avatar::AvatarRenderRequest {
+            mode,
+            avatar_id,
+            text: text_arg,
+            audio_path: None,
+            voice,
+            rate,
+            pitch: None,
+            tts_engine: Some("auto".into()),
+            background,
+            chroma_key: Some(false),
+            no_subtitles: Some(false),
+            pptx_path,
+            ppt_video_path: None,
+            pip_pos: Some("bottom_right".into()),
+            pip_style: Some("circle".into()),
+            pip_scale: Some(0.28),
+            output_path: Some(out_path.to_string_lossy().to_string()),
+        };
+
+        match self.avatar.render(req) {
+            Ok(res) => Ok(ToolOutput::ok(format!(
+                "✓ 成功生成高清流畅数字人播报视频！\n成片路径: {}\n模式: {}\n主播: {}\n字幕与母带已同步对齐封装。",
+                res.output_path, res.mode, res.avatar_id
+            ))),
+            Err(e) => Ok(ToolOutput::err(format!("数字人视频合成失败: {e}"))),
+        }
+    }
+}
+
+

@@ -133,6 +133,39 @@ fn discover_ppt_master(app: &tauri::App) -> Option<PathBuf> {
     None
 }
 
+/// 定位内置的 avatar-master（run_avatar.py 所在目录）。
+fn discover_avatar_master(app: &tauri::App) -> Option<PathBuf> {
+    let bases = resource_bases(app);
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for base in &bases {
+        candidates.push(base.join("plugins").join("avatar-master"));
+        candidates.push(base.join("_up_").join("plugins").join("avatar-master"));
+        candidates.push(base.join("_up_").join("_up_").join("plugins").join("avatar-master"));
+        candidates.push(base.join("resources").join("plugins").join("avatar-master"));
+        candidates.push(
+            base.join("resources")
+                .join("_up_")
+                .join("_up_")
+                .join("plugins")
+                .join("avatar-master"),
+        );
+    }
+    if let Some(dir) = first_existing(candidates) {
+        if dir.join("run_avatar.py").is_file() {
+            return Some(dir);
+        }
+    }
+    let mut budget = 1200usize;
+    for base in bases.iter().take(2) {
+        if let Some(dir) = scan_for(base, "avatar-master", 4, &mut budget) {
+            if dir.join("run_avatar.py").is_file() {
+                return Some(dir);
+            }
+        }
+    }
+    None
+}
+
 /// 定位内置的 llama-server。
 fn discover_llama_server(app: &tauri::App) -> Option<PathBuf> {
     let exe = if cfg!(windows) { "llama-server.exe" } else { "llama-server" };
@@ -335,6 +368,9 @@ fn spawn_core(app: &tauri::App, child_slot: Arc<Mutex<Option<Child>>>) {
     // 把安装包内置的资源交给 core（免安装 Python/llama.cpp 的关键）。
     if let Some(dir) = discover_ppt_master(app) {
         cmd.env("AI_CLIENT_PPT_MASTER_DIR", &dir);
+    }
+    if let Some(dir) = discover_avatar_master(app) {
+        cmd.env("AI_CLIENT_AVATAR_MASTER_DIR", &dir);
     }
     if let Some(bin) = discover_llama_server(app) {
         cmd.env("AI_CLIENT_LLAMA_SERVER", &bin);

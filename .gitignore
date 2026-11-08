@@ -40,6 +40,8 @@ sidecars/media/ffmpeg/
 sidecars/media/libreoffice/
 sidecars/media/piper/
 sidecars/tts/piper/
+sidecars/avatar/models/
+sidecars/avatar/presets/*/frames/
 # 本地临时产物/试验输出
 scratch/
 exports/

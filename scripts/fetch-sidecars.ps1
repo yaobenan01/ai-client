@@ -1,4 +1,4 @@
-﻿# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
+# 拉取/准备离线附件运行时（在开发机构建期执行，产物随应用分发）
 # 目标机器无需安装 Python / FFmpeg / LibreOffice / 模型。
 param(
   [switch]$LlamaCpp,
@@ -7,6 +7,7 @@ param(
   [switch]$Piper,
   [switch]$CosyVoice,
   [switch]$PythonStandalone,
+  [switch]$Avatar,
   [switch]$All
 )
 
@@ -21,6 +22,7 @@ if ($All) {
   $Piper = $true
   $CosyVoice = $true
   $PythonStandalone = $true
+  $Avatar = $true
 }
 
 function FetchWithFallback($urls, $dest) {
@@ -196,17 +198,38 @@ if ($PythonStandalone) {
     Remove-Item $pyTar -Force -ErrorAction SilentlyContinue
     
     # 预装依赖
-    Write-Host "==> 预装 ppt-master Python 依赖..." -ForegroundColor Cyan
+    Write-Host "==> 预装 ppt-master & avatar-master Python 依赖..." -ForegroundColor Cyan
     & "$dest\python.exe" -m pip install --upgrade pip
     if (Test-Path "$root\plugins\ppt-master\requirements.txt") {
       & "$dest\python.exe" -m pip install -r "$root\plugins\ppt-master\requirements.txt"
+    }
+    if (Test-Path "$root\plugins\avatar-master\requirements.txt") {
+      & "$dest\python.exe" -m pip install -r "$root\plugins\avatar-master\requirements.txt"
     }
   } else {
     Write-Host "Python 已存在，跳过拉取。" -ForegroundColor Green
   }
 }
 
-# 6) CosyVoice（模型 + 源码，体积较大）
+# 6) Avatar 数字人离线模型
+if ($Avatar) {
+  $avatarModelDest = "$side\avatar\models\wav2lip.onnx"
+  if (-not (Test-Path $avatarModelDest)) {
+    try {
+      Write-Host "==> 准备 Avatar 离线推理模型 (wav2lip.onnx)..." -ForegroundColor Cyan
+      FetchWithFallback @(
+        "https://hf-mirror.com/camenduru/wav2lip/resolve/main/wav2lip.onnx",
+        "https://huggingface.co/camenduru/wav2lip/resolve/main/wav2lip.onnx"
+      ) $avatarModelDest
+    } catch {
+      Write-Warning "下载 Avatar 模型失败: $_"
+    }
+  } else {
+    Write-Host "Avatar 模型已存在，跳过拉取。" -ForegroundColor Green
+  }
+}
+
+# 7) CosyVoice（模型 + 源码，体积较大）
 if ($CosyVoice) {
   Write-Host "CosyVoice：git clone https://github.com/FunAudioLLM/CosyVoice.git 并下载 CosyVoice2-0.5B 模型" -ForegroundColor Yellow
 }

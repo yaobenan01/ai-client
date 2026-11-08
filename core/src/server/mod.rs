@@ -30,6 +30,8 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/tasks/:id/cancel", post(cancel_task))
         .route("/api/ppt/quick-generate", post(quick_generate_pptx))
         .route("/api/ppt/quick-video", post(quick_pptx_to_video))
+        .route("/api/avatar/presets", get(list_avatar_presets))
+        .route("/api/avatar/render", post(render_avatar_video))
         .route("/api/workspace/files", get(list_workspace_files))
         .route("/api/workspace/download/*path", get(download_workspace_file))
         .route("/api/workspace/open", post(open_workspace_artifact))
@@ -226,6 +228,24 @@ async fn quick_pptx_to_video(State(core): AppState, Json(body): Json<Value>) -> 
         "ok": true,
         "path": rel,
         "filename": video_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+    })))
+}
+
+async fn list_avatar_presets(State(core): AppState) -> ApiResult {
+    let presets = core.avatar.list_presets();
+    Ok(Json(json!({ "ok": true, "presets": presets })))
+}
+
+async fn render_avatar_video(State(core): AppState, Json(body): Json<crate::avatar::AvatarRenderRequest>) -> ApiResult {
+    let res = core.quick_render_avatar(body)?;
+    Ok(Json(json!({
+        "ok": true,
+        "success": res.success,
+        "output_path": res.output_path,
+        "mode": res.mode,
+        "avatar_id": res.avatar_id,
+        "srt_path": res.srt_path,
+        "master_audio": res.master_audio,
     })))
 }
 

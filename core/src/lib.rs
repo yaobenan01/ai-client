@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod auth;
+pub mod avatar;
 pub mod config;
 pub mod context;
 pub mod error;
@@ -13,6 +14,7 @@ pub mod workflow;
 
 use crate::agent::{Agent, AgentConfig, Task, TaskStatus};
 use crate::auth::{AuthService, Session, User};
+use crate::avatar::{AvatarRuntime, AvatarRuntimeConfig};
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::models::llama_cpp::LlamaServerManager;
@@ -35,6 +37,7 @@ pub struct Core {
     pub tools: Arc<ToolRegistry>,
     pub plugins: PluginManager,
     pub ppt: PptRuntime,
+    pub avatar: Arc<AvatarRuntime>,
     pub llama: Arc<LlamaServerManager>,
 }
 
@@ -130,6 +133,48 @@ fn detect_ppt_master_dir(config: &AppConfig) -> PathBuf {
     }
     // 找不到时返回数据目录路径，保持既有报错语义
     config.plugins_dir.join("ppt-master")
+}
+
+/// 定位 avatar-master（run_avatar.py 所在目录）：显式配置 > 数据目录 > 安装包内置资源 > 源码目录。
+fn detect_avatar_master_dir(config: &AppConfig) -> PathBuf {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(p) = std::env::var_os("AI_CLIENT_AVATAR_MASTER_DIR") {
+        candidates.push(PathBuf::from(p));
+    }
+    candidates.push(config.plugins_dir.join("avatar-master"));
+
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let mut bases = vec![dir.to_path_buf()];
+            if let Some(parent) = dir.parent() {
+                bases.push(parent.to_path_buf());
+            }
+            for base in &bases {
+                candidates.push(base.join("plugins").join("avatar-master"));
+                candidates.push(base.join("resources").join("plugins").join("avatar-master"));
+                candidates.push(
+                    base.join("_up_")
+                        .join("_up_")
+                        .join("plugins")
+                        .join("avatar-master"),
+                );
+                candidates.push(base.join("_up_").join("plugins").join("avatar-master"));
+            }
+        }
+    }
+
+    candidates.push(PathBuf::from("plugins/avatar-master"));
+    candidates.push(PathBuf::from("../plugins/avatar-master"));
+    candidates.push(PathBuf::from("../../plugins/avatar-master"));
+    candidates.push(PathBuf::from("../../../plugins/avatar-master"));
+
+    for c in &candidates {
+        if c.join("run_avatar.py").is_file() {
+            return c.clone();
+        }
+    }
+    config.plugins_dir.join("avatar-master")
 }
 
 /// 定位 Python 运行时（优先内置自包含运行库，免除用户安装）：显式配置 > 内置 sidecar > 源码目录 > 系统 PATH。
@@ -425,13 +470,24 @@ impl Core {
             voice: Some("zh-CN-YunxiNeural".into()),
         })?;
         let ppt_arc = Arc::new(ppt.clone());
-        let tools = Arc::new(crate::tools::default_registry_with_ppt(ppt_arc));
+
+        let avatar = Arc::new(AvatarRuntime::detect(AvatarRuntimeConfig {
+            python_exe: Some(detect_python_exe(&config)),
+            avatar_master_dir: Some(detect_avatar_master_dir(&config)),
+            presets_dir: None,
+            models_dir: None,
+            ffmpeg_exe: detect_ffmpeg_exe(&config),
+            piper_exe: detect_piper_exe(&config),
+            piper_model: detect_piper_model(&config),
+        })?);
+
+        let tools = Arc::new(crate::tools::default_registry_with_ppt_and_avatar(ppt_arc, avatar.clone()));
         let plugins = PluginManager::new(config.plugins_dir.clone());
 
         let llama_bin = detect_llama_server_bin(&config);
         let llama = Arc::new(LlamaServerManager::new(llama_bin));
 
-        Ok(Self { config, db, auth, models, tools, plugins, ppt, llama })
+        Ok(Self { config, db, auth, models, tools, plugins, ppt, avatar, llama })
     }
 
     // ---- auth ----
@@ -851,6 +907,28 @@ impl Core {
             exports_dir.join(format!("{}_{}.mp4", stem, chrono::Utc::now().timestamp()))
         };
         self.ppt.pptx_to_video(&src, &out, tts_engine, voice, rate)
+    }
+
+    pub fn quick_render_avatar(&self, mut req: crate::avatar::AvatarRenderRequest) -> Result<crate::avatar::AvatarRenderResponse> {
+        let exports_dir = self.config.workspace_dir.join("exports");
+        std::fs::create_dir_all(&exports_dir)?;
+        if req.output_path.is_none() {
+            let filename = format!("avatar_{}_{}_{}.mp4", req.avatar_id, req.mode, chrono::Utc::now().timestamp());
+            req.output_path = Some(exports_dir.join(filename).to_string_lossy().to_string());
+        }
+        if let Some(pptx) = &req.pptx_path {
+            let p = PathBuf::from(pptx);
+            if !p.is_absolute() {
+                req.pptx_path = Some(self.config.workspace_dir.join(p).to_string_lossy().to_string());
+            }
+        }
+        if let Some(vid) = &req.ppt_video_path {
+            let p = PathBuf::from(vid);
+            if !p.is_absolute() {
+                req.ppt_video_path = Some(self.config.workspace_dir.join(p).to_string_lossy().to_string());
+            }
+        }
+        self.avatar.render(req)
     }
 
     pub fn list_workspace_files(&self) -> Result<Vec<serde_json::Value>> {

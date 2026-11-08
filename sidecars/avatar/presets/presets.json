@@ -1,0 +1,47 @@
+[
+  {
+    "id": "boyang",
+    "name": "伯洋",
+    "gender": "male",
+    "title": "资深金融 / 政务男主播",
+    "avatar_badge": "权威沉稳",
+    "default_voice": "zh-CN-YunxiNeural",
+    "description": "声音稳健庄重、咬字清晰，适合政策解读、新闻宣讲与正式工作汇报。",
+    "preview_color": "#1e293b",
+    "tags": ["政务播报", "年终述职", "金融财讯", "高管演讲"]
+  },
+  {
+    "id": "wanqing",
+    "name": "婉清",
+    "gender": "female",
+    "title": "优雅知性 / 科技早报女主播",
+    "avatar_badge": "温和典雅",
+    "default_voice": "zh-CN-XiaoxiaoNeural",
+    "description": "声线温润柔和、节奏自然，适合公司简介、科技早报与高端产品推介。",
+    "preview_color": "#2d3748",
+    "tags": ["科技前沿", "品牌宣传", "早间播报", "企业文化"]
+  },
+  {
+    "id": "zhiming",
+    "name": "志明",
+    "gender": "male",
+    "title": "亲和商务 / 课件培训导师",
+    "avatar_badge": "亲和教学",
+    "default_voice": "zh-CN-YunjianNeural",
+    "default_voice_fallback": "zh_CN-huayan-medium",
+    "description": "表达生动流畅、亲和力强，适合在线微课、产品操作指南与员工入职培训。",
+    "preview_color": "#1e3a5f",
+    "tags": ["培训课件", "操作指引", "公开讲座", "知识科普"]
+  },
+  {
+    "id": "xinyue",
+    "name": "馨月",
+    "gender": "female",
+    "title": "青春活力 / 新潮体验推介官",
+    "avatar_badge": "元气活力",
+    "default_voice": "zh-CN-XiaoyiNeural",
+    "description": "声音灵动清脆、极具感染力，适合文旅宣传、活动发布与电商带货讲解。",
+    "preview_color": "#3b1e3a",
+    "tags": ["文旅推广", "新潮探店", "快闪发布", "活动邀约"]
+  }
+]

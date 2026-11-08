@@ -8,6 +8,7 @@ import Tasks from './pages/Tasks'
 import TaskDetail from './pages/TaskDetail'
 import Plugins from './pages/Plugins'
 import PptVideo from './pages/PptVideo'
+import AvatarStudio from './pages/AvatarStudio'
 
 const Icon = ({ d }: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -19,7 +20,8 @@ const NAV = [
   { to: '/tasks', label: '任务', d: 'M12 3v3M5.6 5.6l2.1 2.1M3 12h3M5.6 18.4l2.1-2.1M12 21v-3M18.4 18.4l-2.1-2.1M21 12h-3M18.4 5.6l-2.1 2.1' },
   { to: '/models', label: '大模型', d: 'M9 3h6M9 3v3h6V3M12 6v4M7 21h10M7 21a3 3 0 0 1-3-3v-3M17 21a3 3 0 0 0 3-3v-3M7 15h10M7 15v-3h10v3' },
   { to: '/plugins', label: '插件', d: 'M10 3.5a2 2 0 0 1 4 0V5h1a2 2 0 0 1 2 2v1h1.5a2 2 0 0 1 0 4H17v1a2 2 0 0 1-2 2h-1v1.5a2 2 0 0 1-4 0V16h-1a2 2 0 0 1-2-2v-1H5.5a2 2 0 0 1 0-4H7V7a2 2 0 0 1 2-2h1V3.5z' },
-  { to: '/ppt', label: 'PPT / 视频', d: 'M4 4h16v12H4zM4 16l4-4 3 3 4-4 5 5M9 8h.01M12 8h.01M15 8h.01' }
+  { to: '/ppt', label: 'PPT / 视频', d: 'M4 4h16v12H4zM4 16l4-4 3 3 4-4 5 5M9 8h.01M12 8h.01M15 8h.01' },
+  { to: '/avatar', label: '数字人主播', d: 'M12 11c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z' },
 ]
 
 function Logo({ size = 34 }: { size?: number }) {
@@ -122,6 +124,7 @@ export default function App() {
           <Route path="/models" element={<Models />} />
           <Route path="/plugins" element={<Plugins />} />
           <Route path="/ppt" element={<PptVideo />} />
+          <Route path="/avatar" element={<AvatarStudio />} />
         </Routes>
       </main>
     </div>

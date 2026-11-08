@@ -18,6 +18,12 @@ export default function PptVideo() {
   const [voice, setVoice] = useState('zh-CN-YunxiNeural')
   const [speechRate, setSpeechRate] = useState('+0%')
 
+  // Digital Human PiP states
+  const [enableAvatarPip, setEnableAvatarPip] = useState(false)
+  const [pipAvatarId, setPipAvatarId] = useState('boyang')
+  const [pipPos, setPipPos] = useState<'bottom_right' | 'bottom_left' | 'top_right'>('bottom_right')
+  const [pipStyle, setPipStyle] = useState<'circle' | 'rounded_rect' | 'rect'>('circle')
+
   // File input refs
   const pptxFileInputRef = useRef<HTMLInputElement>(null)
   const docFileInputRef = useRef<HTMLInputElement>(null)
@@ -87,16 +93,35 @@ export default function PptVideo() {
     setLastResultPath('')
     setLastResultType(null)
     try {
-      const res = await api.quickRenderVideo({
-        pptx_path: pptxInput.trim(),
-        tts_engine: ttsEngine,
-        voice: voice,
-        rate: speechRate,
-      })
-      setDirectMsg(`✓ 成功渲染口播视频：${res.path}`)
-      setLastResultPath(res.path)
-      setLastResultType('video')
-      await loadFiles()
+      if (enableAvatarPip) {
+        setDirectMsg('🚀 正在启动 PPT + 离线数字人主播画中画全链路渲染...')
+        const res = await api.renderAvatarVideo({
+          mode: 'ppt_pip',
+          avatar_id: pipAvatarId,
+          text: '欢迎各位观看本次演示文稿。我们将结合重点内容进行生动拆解与汇报。',
+          pptx_path: pptxInput.trim(),
+          voice: voice,
+          rate: speechRate,
+          pip_pos: pipPos,
+          pip_style: pipStyle,
+          pip_scale: 0.28,
+        })
+        setDirectMsg(`✓ 成功渲染带数字人画中画的 PPT 视频：${res.output_path}`)
+        setLastResultPath(res.output_path)
+        setLastResultType('video')
+        await loadFiles()
+      } else {
+        const res = await api.quickRenderVideo({
+          pptx_path: pptxInput.trim(),
+          tts_engine: ttsEngine,
+          voice: voice,
+          rate: speechRate,
+        })
+        setDirectMsg(`✓ 成功渲染口播视频：${res.path}`)
+        setLastResultPath(res.path)
+        setLastResultType('video')
+        await loadFiles()
+      }
     } catch (e: any) {
       setDirectError(e.message || '渲染失败')
     } finally {
@@ -473,6 +498,73 @@ export default function PptVideo() {
                   <option value="cosyvoice">CosyVoice 本地大模型</option>
                 </select>
               </div>
+            </div>
+
+            {/* 离线数字人主播画中画陪讲开关 */}
+            <div style={{ padding: '14px 16px', background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: 10, marginTop: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13.5 }}>
+                  <input
+                    type="checkbox"
+                    checked={enableAvatarPip}
+                    onChange={(e) => setEnableAvatarPip(e.target.checked)}
+                  />
+                  <span>🧑‍💼 开启离线数字人主播画中画陪讲 (PiP)</span>
+                </label>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  style={{ fontSize: 11.5, padding: '3px 8px', height: 'auto' }}
+                  onClick={() => nav('/avatar')}
+                >
+                  进入数字人演播厅 →
+                </button>
+              </div>
+
+              {enableAvatarPip && (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(99, 102, 241, 0.15)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 11.5, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>选定主播</label>
+                    <select
+                      className="input"
+                      value={pipAvatarId}
+                      onChange={(e) => setPipAvatarId(e.target.value)}
+                      style={{ width: '100%', height: 32, fontSize: 12 }}
+                    >
+                      <option value="boyang">伯洋 (资深政务男声)</option>
+                      <option value="wanqing">婉清 (优雅知性女声)</option>
+                      <option value="zhiming">志明 (亲和微课导师)</option>
+                      <option value="xinyue">馨月 (青春活力推介)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11.5, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>显示位置</label>
+                    <select
+                      className="input"
+                      value={pipPos}
+                      onChange={(e) => setPipPos(e.target.value as any)}
+                      style={{ width: '100%', height: 32, fontSize: 12 }}
+                    >
+                      <option value="bottom_right">右下角</option>
+                      <option value="bottom_left">左下角</option>
+                      <option value="top_right">右上角</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11.5, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>窗口样式</label>
+                    <select
+                      className="input"
+                      value={pipStyle}
+                      onChange={(e) => setPipStyle(e.target.value as any)}
+                      style={{ width: '100%', height: 32, fontSize: 12 }}
+                    >
+                      <option value="circle">圆形徽章</option>
+                      <option value="rounded_rect">圆角卡片</option>
+                      <option value="rect">矩形窗口</option>
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 功能说明提示条 */}
