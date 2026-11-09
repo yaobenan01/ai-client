@@ -87,6 +87,15 @@ export const api = {
     srt_path?: string;
     master_audio?: string;
   }>('/api/avatar/render', { method: 'POST', body: JSON.stringify(payload) }),
+  createAvatarTask: (payload: any) => request<{ ok: boolean; task_id: string; task: any }>('/api/avatar/task', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  uploadWorkspaceFile: (payload: { filename: string; data_base64: string }) =>
+    request<{ ok: boolean; path: string; filename: string; size: number }>('/api/workspace/upload', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   generateAvatarScript: (payload: {
     content: string;
     style?: string;

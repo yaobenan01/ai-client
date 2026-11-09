@@ -32,8 +32,10 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/ppt/quick-video", post(quick_pptx_to_video))
         .route("/api/avatar/presets", get(list_avatar_presets))
         .route("/api/avatar/render", post(render_avatar_video))
+        .route("/api/avatar/task", post(create_avatar_task_handler))
         .route("/api/avatar/generate-script", post(generate_avatar_script_handler))
         .route("/api/workspace/files", get(list_workspace_files))
+        .route("/api/workspace/upload", post(upload_workspace_file))
         .route("/api/workspace/download/*path", get(download_workspace_file))
         .route("/api/workspace/open", post(open_workspace_artifact))
         .route("/api/workspace/reveal", post(reveal_workspace_artifact))
@@ -250,6 +252,34 @@ async fn render_avatar_video(State(core): AppState, Json(body): Json<crate::avat
     })))
 }
 
+async fn create_avatar_task_handler(
+    State(core): AppState,
+    headers: HeaderMap,
+    Json(body): Json<crate::avatar::AvatarRenderRequest>,
+) -> ApiResult {
+    let user = crate::server::auth::require_user(&core, &headers)?;
+    let title = format!(
+        "数字人视频合成 - 主播: {} ({})",
+        body.avatar_id,
+        if body.mode == "ppt_pip" { "PPT画中画" } else { "独立全屏" }
+    );
+    let input = serde_json::to_string(&body).unwrap_or_default();
+    let task = core.create_task(&user.id, &title, &input, None)?;
+
+    // 启动后台异步任务执行
+    let core_clone = core.clone();
+    let task_id = task.id.clone();
+    tokio::spawn(async move {
+        let _ = core_clone.run_task(&task_id).await;
+    });
+
+    Ok(Json(json!({
+        "ok": true,
+        "task_id": task.id,
+        "task": task
+    })))
+}
+
 async fn generate_avatar_script_handler(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
     let content = body.get("content").and_then(|v| v.as_str()).unwrap_or("").trim();
     if content.is_empty() {
@@ -272,6 +302,35 @@ async fn generate_avatar_script_handler(State(core): AppState, Json(body): Json<
 async fn list_workspace_files(State(core): AppState) -> ApiResult {
     let files = core.list_workspace_files()?;
     Ok(Json(json!({ "files": files })))
+}
+
+async fn upload_workspace_file(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
+    let filename = body.get("filename").and_then(|v| v.as_str()).unwrap_or("upload_file");
+    let data_base64 = body.get("data_base64").and_then(|v| v.as_str()).ok_or_else(|| {
+        ApiError(StatusCode::BAD_REQUEST, json!({"error": "缺少 data_base64 数据"}))
+    })?;
+
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data_base64)
+        .map_err(|e| ApiError(StatusCode::BAD_REQUEST, json!({"error": format!("Base64 解码失败: {e}")})))?;
+
+    let uploads_dir = core.config.workspace_dir.join("uploads");
+    std::fs::create_dir_all(&uploads_dir).map_err(|e| {
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("无法创建 uploads 目录: {e}")}))
+    })?;
+
+    let safe_name = std::path::Path::new(filename).file_name().and_then(|s| s.to_str()).unwrap_or("file.bin");
+    let target_path = uploads_dir.join(safe_name);
+    std::fs::write(&target_path, &bytes).map_err(|e| {
+        ApiError(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("写入文件失败: {e}")}))
+    })?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "path": target_path.to_string_lossy().to_string(),
+        "filename": safe_name,
+        "size": bytes.len(),
+    })))
 }
 
 async fn download_workspace_file(

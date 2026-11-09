@@ -55,6 +55,11 @@ def locate_default_dirs():
     return proj_root, presets_dir, models_dir
 
 
+def print_progress(percent: int, message: str):
+    print(f"[PROGRESS] {percent}%: {message}", flush=True)
+    logger.info(f"Progress {percent}%: {message}")
+
+
 def main():
     raw_args = sys.argv[1:]
     normalized_args = normalize_cli_args(raw_args)
@@ -127,8 +132,10 @@ def main():
     work_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        print_progress(5, "初始化数字人渲染沙箱与参数配置...")
         # Step 1: Voice Narration Pipeline
         logger.info(">>> [Phase 1/4] Processing Speech Narration Pipeline...")
+        print_progress(15, "正在进行语义断句、标点生理停顿注入与高保真语音母带合成...")
         audio_pipe = AudioPipeline(sample_rate=16000)
 
         if args.audio and os.path.isfile(args.audio):
@@ -151,19 +158,30 @@ def main():
             srt_file = None
 
         logger.info(f"Master audio ready: {master_audio}")
+        print_progress(30, "语音母带合成完毕 (已对齐 EBU R128 标准)，正在核验人物底模...")
 
         # Step 2: Ensure Preset Assets or Process Custom Avatar
         logger.info(">>> [Phase 2/4] Verifying Digital Human Preset Assets...")
-        if args.custom_avatar_media and os.path.isfile(args.custom_avatar_media):
-            logger.info(f"Using custom avatar media: {args.custom_avatar_media}")
-            custom_dir = work_dir / "custom_avatar"
-            preset_dir = prepare_custom_avatar_assets(args.custom_avatar_media, str(custom_dir))
+        if args.avatar_id == "custom" or args.custom_avatar_media:
+            if args.custom_avatar_media and os.path.isfile(args.custom_avatar_media):
+                logger.info(f"Using custom avatar media: {args.custom_avatar_media}")
+                print_progress(35, "正在提取自定义人物视频/照片素材特征与 25FPS 底模循环...")
+                custom_dir = work_dir / "custom_avatar"
+                preset_dir = prepare_custom_avatar_assets(args.custom_avatar_media, str(custom_dir))
+            else:
+                logger.warning("未检测到有效自定义素材文件，自动降级至精选内置主播「伯洋」...")
+                args.avatar_id = "boyang"
+                preset_dir = Path(args.presets_dir) / "boyang"
+                preset_dir = ensure_preset_assets(str(preset_dir), "boyang")
         else:
             preset_dir = Path(args.presets_dir) / args.avatar_id
             preset_dir = ensure_preset_assets(str(preset_dir), args.avatar_id)
 
+        print_progress(45, "人物底模素材与面部嘴周关键坐标核验通过...")
+
         # Step 3: Neural Lipsync Synthesis
         logger.info(">>> [Phase 3/4] Synthesizing Lipsync Frame Sequence...")
+        print_progress(55, "正在进行神经网络逐帧声画动态唇形重构 (25 FPS)...")
         lipsync_engine = LipsyncEngine(
             model_path=args.model_path if os.path.isfile(args.model_path) else None,
             device=args.device,
@@ -177,9 +195,11 @@ def main():
             output_video_path=synced_avatar_video,
             fps=25
         )
+        print_progress(75, "神经网络动态唇形重构完成，进入最终音画与字幕合成...")
 
         # Step 4: Final Layer Blending & Presentation Compositing
         logger.info(f">>> [Phase 4/4] Final Compositing (Mode: {args.mode})...")
+        print_progress(85, "正在进行音画流编码封装与微黑底白字字幕烧录...")
 
         if args.mode == "standalone":
             final_video = composite_standalone(
@@ -215,6 +235,8 @@ def main():
                 pip_scale=args.pip_scale,
                 srt_path=srt_file
             )
+
+        print_progress(100, "数字人成片渲染与字幕封装完成！")
 
         # Emit JSON result to stdout for client parsing
         result_payload = {

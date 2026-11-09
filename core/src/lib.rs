@@ -761,6 +761,12 @@ impl Core {
     /// Execute a task using the core agent loop with step observability and artifact tracking.
     pub async fn run_task(&self, id: &str) -> Result<Task> {
         let task = self.get_task(id)?;
+
+        // 特殊任务分流：若是数字人渲染任务，直接走自闭环离线流水线，无需依赖大模型
+        if let Ok(avatar_req) = serde_json::from_str::<crate::avatar::AvatarRenderRequest>(&task.input) {
+            return self.run_avatar_task(id, avatar_req).await;
+        }
+
         let model_id_ref = task.model_id.as_deref();
         let profile = match self.models.resolve(model_id_ref) {
             Some(p) => p,
@@ -846,6 +852,65 @@ impl Core {
                     &e.to_string(),
                     &final_logs,
                     &artifacts_json,
+                )?;
+            }
+        }
+        self.get_task(id)
+    }
+
+    /// Dedicated runner for offline avatar video synthesis tasks.
+    pub async fn run_avatar_task(&self, id: &str, req: crate::avatar::AvatarRenderRequest) -> Result<Task> {
+        let mut steps = vec![
+            crate::agent::TaskStep {
+                step: 1,
+                action: "thought".into(),
+                tool_name: Some("avatar_video_synthesize".into()),
+                input: None,
+                output: Some(format!("启动数字人离线渲染流水线：主播={}, 模式={}, 文案字数={}", req.avatar_id, req.mode, req.text.chars().count())),
+                timestamp: chrono::Utc::now().timestamp(),
+            }
+        ];
+        let logs_str = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
+        self.update_task_record(id, TaskStatus::Running, 15, "正在启动离线数字人渲染沙箱...", &logs_str, "[]")?;
+
+        match self.quick_render_avatar(req) {
+            Ok(res) => {
+                steps.push(crate::agent::TaskStep {
+                    step: 2,
+                    action: "tool_use".into(),
+                    tool_name: Some("avatar_video_synthesize".into()),
+                    input: None,
+                    output: Some(format!("✓ 数字人视频合成成功！产物已归档至：{}", res.output_path)),
+                    timestamp: chrono::Utc::now().timestamp(),
+                });
+                let final_logs = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
+                let artifacts_json = serde_json::to_string(&vec![res.output_path.clone()]).unwrap_or_else(|_| "[]".into());
+                self.update_task_record(
+                    id,
+                    TaskStatus::Done,
+                    100,
+                    &format!("视频合成完成：{}", res.output_path),
+                    &final_logs,
+                    &artifacts_json,
+                )?;
+            }
+            Err(e) => {
+                steps.push(crate::agent::TaskStep {
+                    step: 2,
+                    action: "error".into(),
+                    tool_name: Some("avatar_video_synthesize".into()),
+                    input: None,
+                    output: Some(format!("合成出错: {e}")),
+                    timestamp: chrono::Utc::now().timestamp(),
+                });
+                let final_logs = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
+                self.update_task_record(
+                    id,
+                    TaskStatus::Failed,
+                    100,
+                    &e.to_string(),
+                    &final_logs,
+                    "[]",
                 )?;
             }
         }
