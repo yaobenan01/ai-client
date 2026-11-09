@@ -244,43 +244,50 @@ def ensure_preset_assets(preset_dir_path: str, avatar_id: str) -> str:
     """Ensures preset directory contains playable base frames and face box metadata."""
     import cv2
     import tempfile
+    import shutil
 
-    preset_dir = Path(preset_dir_path).resolve()
-    frames_dir = preset_dir / "frames"
+    source_dir = Path(preset_dir_path).resolve()
+    source_frames_dir = source_dir / "frames"
 
     # 如果原目录已有可用帧且存在面部标注，直接只读复用，绝不写文件
-    existing_frames = list(frames_dir.glob("*.jpg")) if frames_dir.exists() else []
-    if not existing_frames and frames_dir.exists():
-        existing_frames = list(frames_dir.glob("*.png"))
+    existing_source_frames = list(source_frames_dir.glob("*.jpg")) if source_frames_dir.exists() else []
+    if not existing_source_frames and source_frames_dir.exists():
+        existing_source_frames = list(source_frames_dir.glob("*.png"))
     
-    if existing_frames and (preset_dir / "face_boxes.npy").exists():
-        return str(preset_dir)
+    if existing_source_frames and (source_dir / "face_boxes.npy").exists():
+        return str(source_dir)
 
     # 需要创建或生成帧：先探测原路径是否可写（防止 C:\Program Files 等安装目录只读报错）
     is_writable = False
     try:
-        preset_dir.mkdir(parents=True, exist_ok=True)
-        test_file = preset_dir / ".write_probe"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        test_file = source_dir / ".write_probe"
         test_file.touch()
         test_file.unlink()
         is_writable = True
     except (PermissionError, OSError):
         is_writable = False
 
-    if not is_writable:
-        # 重定向到当前用户可写的系统临时缓存目录，杜绝 PermissionError [WinError 5]
-        cache_dir = Path(tempfile.gettempdir()) / "ai_client_avatar" / "presets" / avatar_id
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        preset_dir = cache_dir
-        frames_dir = preset_dir / "frames"
-        frames_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = source_dir if is_writable else (Path(tempfile.gettempdir()) / "ai_client_avatar" / "presets" / avatar_id).resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir = target_dir / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    face_boxes_file = target_dir / "face_boxes.npy"
 
-    face_boxes_file = preset_dir / "face_boxes.npy"
-    base_video_file = preset_dir / "base.mp4"
+    target_frames = list(frames_dir.glob("*.jpg")) if frames_dir.exists() else []
+    if not target_frames and frames_dir.exists():
+        target_frames = list(frames_dir.glob("*.png"))
+
+    if target_frames and face_boxes_file.exists():
+        return str(target_dir)
+
+    # 优先使用原安装目录或目标目录中的 base.mp4 视频
+    base_video_file = source_dir / "base.mp4"
+    if not base_video_file.is_file():
+        base_video_file = target_dir / "base.mp4"
 
     # If base.mp4 exists but frames don't, extract frames
-    if base_video_file.is_file() and not frames_dir.exists():
-        frames_dir.mkdir(parents=True, exist_ok=True)
+    if base_video_file.is_file() and not target_frames:
         cap = cv2.VideoCapture(str(base_video_file))
         idx = 0
         while cap.isOpened():
@@ -290,6 +297,14 @@ def ensure_preset_assets(preset_dir_path: str, avatar_id: str) -> str:
             cv2.imwrite(str(frames_dir / f"{idx:05d}.jpg"), f)
             idx += 1
         cap.release()
+        target_frames = list(frames_dir.glob("*.jpg"))
+
+    # 如果原目录有现成的 face_boxes.npy，直接拷贝到目标目录
+    if not face_boxes_file.exists() and (source_dir / "face_boxes.npy").is_file():
+        try:
+            shutil.copy2(str(source_dir / "face_boxes.npy"), str(face_boxes_file))
+        except Exception:
+            pass
 
     # If neither frames nor base.mp4 exists, generate high quality default anchor frames
     existing_frames = list(frames_dir.glob("*.jpg")) if frames_dir.exists() else []

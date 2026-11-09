@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::Core;
 use axum::{
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -43,6 +43,7 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/plugins/install", post(install_plugin))
         .route("/api/system/info", get(system_info))
         .route("/api/system/runtimes", get(runtime_status))
+        .layer(DefaultBodyLimit::max(500 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(core)
 }

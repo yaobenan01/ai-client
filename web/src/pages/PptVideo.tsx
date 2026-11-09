@@ -529,7 +529,7 @@ export default function PptVideo() {
                       className="input"
                       value={pipAvatarId}
                       onChange={(e) => setPipAvatarId(e.target.value)}
-                      style={{ width: '100%', height: 32, fontSize: 12 }}
+                      style={{ width: '100%', height: 36, lineHeight: '34px', fontSize: 12, padding: '0 28px 0 10px' }}
                     >
                       <option value="boyang">伯洋 (资深政务男声)</option>
                       <option value="wanqing">婉清 (优雅知性女声)</option>
@@ -543,7 +543,7 @@ export default function PptVideo() {
                       className="input"
                       value={pipPos}
                       onChange={(e) => setPipPos(e.target.value as any)}
-                      style={{ width: '100%', height: 32, fontSize: 12 }}
+                      style={{ width: '100%', height: 36, lineHeight: '34px', fontSize: 12, padding: '0 28px 0 10px' }}
                     >
                       <option value="bottom_right">右下角</option>
                       <option value="bottom_left">左下角</option>
@@ -556,7 +556,7 @@ export default function PptVideo() {
                       className="input"
                       value={pipStyle}
                       onChange={(e) => setPipStyle(e.target.value as any)}
-                      style={{ width: '100%', height: 32, fontSize: 12 }}
+                      style={{ width: '100%', height: 36, lineHeight: '34px', fontSize: 12, padding: '0 28px 0 10px' }}
                     >
                       <option value="circle">圆形徽章</option>
                       <option value="rounded_rect">圆角卡片</option>

@@ -192,10 +192,14 @@ export default function AvatarStudio() {
     setErrorMsg('')
 
     if (localPath) {
+      // 桌面客户端环境下，本地绝对路径可直接供后台 Python / FFmpeg 读取，无需额外 base64 上传
       setCustomAvatarPath(localPath)
+      setCustomUploading(false)
+      e.target.value = ''
+      return
     }
 
-    // Always upload to workspace/uploads to ensure backend local disk accessibility
+    // Web 浏览器模式下：将素材传输至服务端工作区
     setCustomUploading(true)
     try {
       const reader = new FileReader()
@@ -211,15 +215,18 @@ export default function AvatarStudio() {
             setCustomAvatarPath(upRes.path)
           }
         } catch (err: any) {
-          if (!localPath) {
-            setErrorMsg(`素材保存失败：${err.message || '无法写入工作区'}`)
-          }
+          setErrorMsg(`素材保存失败：${err.message || '无法写入工作区'}`)
         } finally {
           setCustomUploading(false)
         }
       }
+      reader.onerror = () => {
+        setErrorMsg('素材读取失败，请检查文件权限')
+        setCustomUploading(false)
+      }
       reader.readAsDataURL(file)
-    } catch {
+    } catch (err: any) {
+      setErrorMsg(`素材处理异常: ${err?.message || '未知错误'}`)
       setCustomUploading(false)
     }
 
@@ -898,10 +905,10 @@ export default function AvatarStudio() {
                       value={llmStyle}
                       onChange={(e) => setLlmStyle(e.target.value as any)}
                     >
-                      <option value="business">💼 商务政务 / 权威述职 (庄重大气)</option>
-                      <option value="academic">🎓 学术汇报 / 课件微课 (严谨专业)</option>
-                      <option value="teaching">🌟 通俗生动 / 科普解说 (循序渐进)</option>
-                      <option value="marketing">🚀 爆款营销 / 新潮推介 (节奏明快)</option>
+                      <option value="business">💼 商务政务 (庄重大气)</option>
+                      <option value="academic">🎓 学术微课 (严谨专业)</option>
+                      <option value="teaching">🌟 通俗科普 (生动清晰)</option>
+                      <option value="marketing">🚀 爆款推介 (节奏明快)</option>
                     </select>
                   </div>
                   <div>
@@ -911,9 +918,9 @@ export default function AvatarStudio() {
                       value={llmDuration}
                       onChange={(e) => setLlmDuration(e.target.value as any)}
                     >
-                      <option value="1m">⚡ 1 分钟精要速览 (~250 字)</option>
-                      <option value="3m">⏱️ 3 分钟标准宣讲 (~700 字)</option>
-                      <option value="5m">📖 5 分钟深度讲透 (~1200 字)</option>
+                      <option value="1m">⚡ 1 分钟精要速览 (~250字)</option>
+                      <option value="3m">⏱️ 3 分钟标准宣讲 (~700字)</option>
+                      <option value="5m">📖 5 分钟深度讲解 (~1200字)</option>
                     </select>
                   </div>
                 </div>
@@ -990,16 +997,16 @@ export default function AvatarStudio() {
                   onChange={(e) => setVoice(e.target.value)}
                 >
                   <optgroup label="激情演讲 / 权威男声">
-                    <option value="zh-CN-YunxiNeural">🎙️ 云希 · 激情宣讲 / 演说男声 (推荐)</option>
-                    <option value="zh-CN-YunjianNeural">🎙️ 云健 · 沉稳专业 / 影视旁白</option>
-                    <option value="zh-CN-YunyangNeural">🎙️ 云扬 · 专业新闻播音主持</option>
+                    <option value="zh-CN-YunxiNeural">🎙️ 云希 · 激情演讲 (男声推荐)</option>
+                    <option value="zh-CN-YunjianNeural">🎙️ 云健 · 沉稳专业 (影视旁白)</option>
+                    <option value="zh-CN-YunyangNeural">🎙️ 云扬 · 新闻主持 (权威播报)</option>
                   </optgroup>
                   <optgroup label="优雅温和 / 知性女声">
-                    <option value="zh-CN-XiaoxiaoNeural">🎙️ 晓晓 · 知性温和 / 优雅女声</option>
-                    <option value="zh-CN-XiaoyiNeural">🎙️ 晓伊 · 青春活泼 / 灵动女声</option>
+                    <option value="zh-CN-XiaoxiaoNeural">🎙️ 晓晓 · 知性温和 (女声推荐)</option>
+                    <option value="zh-CN-XiaoyiNeural">🎙️ 晓伊 · 青春活泼 (灵动女声)</option>
                   </optgroup>
                   <optgroup label="纯离线 Piper 独立音色">
-                    <option value="zh_CN-huayan-medium">💻 华严 · 离线中性教学音色</option>
+                    <option value="zh_CN-huayan-medium">💻 华严 · 离线中性 (Piper内置)</option>
                   </optgroup>
                 </select>
               </div>
@@ -1032,8 +1039,8 @@ export default function AvatarStudio() {
                   value={ttsEngine}
                   onChange={(e) => setTtsEngine(e.target.value)}
                 >
-                  <option value="auto">智能双擎 (在线神经音色，离线无缝降级)</option>
-                  <option value="piper">纯离线 Piper (零网络强制依赖)</option>
+                  <option value="auto">智能双擎 (优先在线 / 离线备选)</option>
+                  <option value="piper">纯离线 Piper (零网络依赖)</option>
                 </select>
               </div>
 

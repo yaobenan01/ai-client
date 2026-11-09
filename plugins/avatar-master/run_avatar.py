@@ -11,7 +11,9 @@ Orchestrates:
 import os
 import sys
 import json
+import time
 import shutil
+import tempfile
 import argparse
 import logging
 from pathlib import Path
@@ -119,17 +121,26 @@ def main():
         logger.error("Either --text or --audio must be specified.")
         sys.exit(1)
 
-    # Determine destination output path
+    # Determine destination output path safely
     if args.out:
         out_path = Path(args.out).resolve()
     else:
-        out_dir = proj_root / "workspace" / "exports"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"avatar_{args.avatar_id}_{args.mode}_{int(os.path.getmtime(SCRIPT_DIR))}.mp4"
+        try:
+            out_dir = proj_root / "workspace" / "exports"
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError):
+            out_dir = Path(tempfile.gettempdir()) / "ai_client_avatar_exports"
+            out_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"avatar_{args.avatar_id}_{args.mode}_{int(time.time())}.mp4"
         out_path = out_dir / filename
 
-    work_dir = out_path.parent / f"_temp_avatar_{args.avatar_id}"
-    work_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        work_dir = out_path.parent / f"_temp_avatar_{args.avatar_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError):
+        work_dir = Path(tempfile.gettempdir()) / f"ai_client_temp_{args.avatar_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         print_progress(5, "初始化数字人渲染沙箱与参数配置...")

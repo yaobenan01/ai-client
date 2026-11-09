@@ -242,7 +242,7 @@ export default function Models() {
           </div>
 
           <form onSubmit={add} style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(0, 1fr)', gap: 14, marginBottom: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.15fr)', gap: 14, marginBottom: 14 }}>
               <div className="field" style={{ margin: 0 }}>
                 <label style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>模型显示名称</label>
                 <input
@@ -263,8 +263,8 @@ export default function Models() {
                   value={kind}
                   onChange={(e) => setKind(e.target.value)}
                 >
-                  <option value="local_gguf">本地 GGUF（自动拉起）</option>
-                  <option value="openai_compat">OpenAI 兼容端点</option>
+                  <option value="local_gguf">本地 GGUF (llama.cpp)</option>
+                  <option value="openai_compat">OpenAI 兼容协议</option>
                 </select>
               </div>
             </div>

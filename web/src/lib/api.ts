@@ -17,11 +17,18 @@ async function request<T = any>(path: string, opts: RequestInit = {}): Promise<T
   let res: Response
   try {
     res = await fetch(BASE + path, { ...opts, headers })
-  } catch {
-    throw new Error('无法连接核心服务，请确认 ai-client 核心已在 127.0.0.1:8787 启动')
+  } catch (err: any) {
+    const isOnline = await fetch(BASE + '/health', { cache: 'no-store' }).then((r) => r.ok).catch(() => false)
+    if (!isOnline) {
+      throw new Error('无法连接核心服务，请确认 ai-client 核心已在 127.0.0.1:8787 启动')
+    }
+    throw new Error(err?.message || '请求处理异常或数据传输被中断')
   }
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`)
+  if (!res.ok) {
+    if (res.status === 413) throw new Error('上传素材体积超出服务器限制 (413)')
+    throw new Error(data.error || `请求失败 (${res.status})`)
+  }
   return data as T
 }
 
