@@ -257,7 +257,7 @@ async fn create_avatar_task_handler(
     headers: HeaderMap,
     Json(body): Json<crate::avatar::AvatarRenderRequest>,
 ) -> ApiResult {
-    let user = crate::server::auth::require_user(&core, &headers)?;
+    let user = current_user(&core, &headers)?;
     let title = format!(
         "数字人视频合成 - 主播: {} ({})",
         body.avatar_id,
