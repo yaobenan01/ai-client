@@ -388,6 +388,65 @@ def ensure_preset_assets(preset_dir_path: str, avatar_id: str) -> str:
     return str(preset_dir)
 
 
+def detect_face_and_mouth(image: np.ndarray) -> tuple[int, int, int, int, int, int]:
+    """Accurately detects face bounding box and mouth center coordinates (cx, cy)."""
+    import cv2
+    h, w = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # 1. Horizontal face center
+    x1, x2 = int(w * 0.2), int(w * 0.8)
+    sub_gray = gray[:, x1:x2]
+    edges = cv2.Canny(sub_gray, 40, 120)
+    col_density = np.sum(edges, axis=0)
+    if np.max(col_density) > 0:
+        face_cx = x1 + int(np.average(np.arange(len(col_density)), weights=col_density))
+    else:
+        face_cx = w // 2
+
+    # 2. Vertical head bounds around face_cx
+    strip = gray[:, max(0, face_cx - int(w * 0.12)):min(w, face_cx + int(w * 0.12))]
+    strip_edges = cv2.Canny(strip, 40, 120)
+    row_density = np.sum(strip_edges, axis=1)
+
+    active_rows = np.where(row_density > np.max(row_density) * 0.15)[0]
+    if len(active_rows) > 0:
+        head_top = active_rows[0]
+        chin = active_rows[-1]
+    else:
+        head_top, chin = int(h * 0.2), int(h * 0.8)
+
+    head_h = max(60, chin - head_top)
+    head_w = max(60, int(head_h * 0.75))
+
+    # 3. Locate mouth via lip chrominance peak (2*R - G - B)
+    sy1 = max(0, head_top + int(head_h * 0.70))
+    sy2 = min(h, head_top + int(head_h * 0.95))
+    sx1 = max(0, face_cx - int(head_w * 0.35))
+    sx2 = min(w, face_cx + int(head_w * 0.35))
+
+    mouth_slice = image[sy1:sy2, sx1:sx2]
+    if mouth_slice.size > 0:
+        r = mouth_slice[:, :, 2].astype(float)
+        g = mouth_slice[:, :, 1].astype(float)
+        b = mouth_slice[:, :, 0].astype(float)
+        lipness = 2.0 * r - g - b
+        lipness_blur = cv2.GaussianBlur(lipness, (9, 9), 2.0)
+        ly, lx = np.unravel_index(np.argmax(lipness_blur), lipness_blur.shape)
+        mouth_cx = sx1 + lx
+        mouth_cy = sy1 + ly
+    else:
+        mouth_cx = face_cx
+        mouth_cy = head_top + int(head_h * 0.82)
+
+    ymin = max(0, mouth_cy - int(head_h * 0.35))
+    ymax = min(h, mouth_cy + int(head_h * 0.25))
+    xmin = max(0, mouth_cx - int(head_w * 0.5))
+    xmax = min(w, mouth_cx + int(head_w * 0.5))
+
+    return ymin, xmin, ymax, xmax, mouth_cx, mouth_cy
+
+
 def prepare_custom_avatar_assets(media_path: str, output_dir_path: str) -> str:
     """Extracts frames from custom user-uploaded video or portrait photo."""
     import cv2
@@ -425,19 +484,14 @@ def prepare_custom_avatar_assets(media_path: str, output_dir_path: str) -> str:
             shifted = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
             cv2.imwrite(str(frames_dir / f"{i:05d}.jpg"), shifted)
 
-    # 计算人脸嘴周候选框
+    # 计算人脸嘴周候选框与嘴唇精准坐标
     frame_files = sorted(frames_dir.glob("*.jpg"))
     if not frame_files:
         raise RuntimeError(f"未能从自定义素材中解析出可用画面帧: {media_path}")
 
     sample = cv2.imread(str(frame_files[0]))
-    h, w = sample.shape[:2]
-    # 默认人脸嘴唇位置：位于画面纵向 45%~75%，横向 35%~65%
-    ymin = int(h * 0.40)
-    xmin = int(w * 0.35)
-    ymax = int(h * 0.72)
-    xmax = int(w * 0.65)
-    boxes = np.array([[ymin, xmin, ymax, xmax] for _ in frame_files], dtype=np.int32)
+    ymin, xmin, ymax, xmax, mcx, mcy = detect_face_and_mouth(sample)
+    boxes = np.array([[ymin, xmin, ymax, xmax, mcx, mcy] for _ in frame_files], dtype=np.int32)
     np.save(str(face_boxes_file), boxes)
 
     return str(out_dir)
@@ -514,6 +568,7 @@ class LipsyncEngine:
             "-preset", "veryfast",
             "-crf", "18",
             "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
             "-c:a", "aac",
             "-b:a", "192k",
             "-shortest",
@@ -537,7 +592,6 @@ class LipsyncEngine:
                 n_base = len(base_frames)
                 cycle = 2 * (n_base - 1) if n_base > 1 else 1
 
-                feather_mask = build_elliptical_feather_mask(96, 96)
                 prev_open = 0.0
 
                 for i in range(total_frames):
@@ -546,35 +600,43 @@ class LipsyncEngine:
                     out_frame = base_frames[base_i].copy()
 
                     rms = rms_energies[i]
-                    ymin, xmin, ymax, xmax = [int(v) for v in face_boxes[base_i]]
+                    box = face_boxes[base_i]
+                    ymin, xmin, ymax, xmax = [int(v) for v in box[:4]]
                     crop_w, crop_h = xmax - xmin, ymax - ymin
+                    if len(box) >= 6:
+                        mcx, mcy = int(box[4]), int(box[5])
+                    else:
+                        mcx, mcy = xmin + crop_w // 2, ymin + int(crop_h * 0.65)
 
                     # Modulation based on energy (smooth EMA 0.65)
-                    target_open = min(1.0, max(0.0, (rms - 0.007) / 0.04))
+                    target_open = min(1.0, max(0.0, (rms - 0.007) / 0.038))
                     curr_open = 0.65 * target_open + 0.35 * prev_open
                     prev_open = curr_open
 
-                    if curr_open > 0.05 and crop_w > 10 and crop_h > 10:
-                        # Extract lower face
-                        face_crop = out_frame[ymin:ymax, xmin:xmax]
-                        # Draw natural mouth phoneme aperture in the center
-                        cx, cy = crop_w // 2, int(crop_h * 0.65)
-                        mouth_w = int(crop_w * 0.28)
-                        mouth_h = int(crop_h * 0.18 * curr_open)
+                    if curr_open > 0.04 and crop_w > 10 and crop_h > 10:
+                        open_h = int(14 * curr_open)
+                        cavity_w = max(10, int(crop_w * 0.18))
+                        cavity_h = max(2, open_h)
 
-                        # Overlay soft inner mouth opening
-                        overlay = face_crop.copy()
-                        cv2.ellipse(overlay, (cx, cy), (mouth_w, max(2, mouth_h)), 0, 0, 360, (20, 20, 50), -1)
-                        # Upper & lower lips
-                        cv2.ellipse(overlay, (cx, cy - max(1, mouth_h // 2)), (mouth_w + 3, max(2, mouth_h // 2)), 0, 0, 180, (110, 60, 70), -1)
-                        cv2.ellipse(overlay, (cx, cy + max(1, mouth_h // 2)), (mouth_w + 2, max(2, mouth_h // 2)), 0, 180, 360, (130, 70, 80), -1)
+                        # Pull down lower lip and chin naturally
+                        chin_y1 = mcy
+                        chin_y2 = min(h, mcy + int(crop_h * 0.35))
+                        chin_x1 = max(0, mcx - int(crop_w * 0.22))
+                        chin_x2 = min(w, mcx + int(crop_w * 0.22))
 
-                        mask = cv2.resize(feather_mask, (crop_w, crop_h))
-                        if mask.ndim == 2:
-                            mask = np.expand_dims(mask, axis=-1)
+                        if chin_y2 > chin_y1 + 5 and chin_x2 > chin_x1 + 5:
+                            chin_patch = out_frame[chin_y1:chin_y2, chin_x1:chin_x2].copy()
+                            for r in range(chin_y2 - chin_y1 - 1, -1, -1):
+                                weight = max(0.0, 1.0 - (r / float(chin_y2 - chin_y1)))
+                                shift = int(open_h * weight)
+                                dst_y = chin_y1 + r + shift
+                                if dst_y < h:
+                                    out_frame[dst_y, chin_x1:chin_x2] = chin_patch[r, :]
 
-                        blended = (overlay.astype(np.float32) * mask + face_crop.astype(np.float32) * (1.0 - mask)).astype(np.uint8)
-                        out_frame[ymin:ymax, xmin:xmax] = blended
+                            # Soft realistic oral cavity opening (dark oral interior + subtle upper teeth)
+                            cv2.ellipse(out_frame, (mcx, mcy + open_h // 2), (cavity_w, cavity_h), 0, 0, 360, (22, 18, 30), -1)
+                            teeth_h = max(1, min(4, cavity_h // 2))
+                            cv2.ellipse(out_frame, (mcx, mcy + teeth_h // 2), (int(cavity_w * 0.68), teeth_h), 0, 0, 180, (205, 210, 220), -1)
 
                     proc.stdin.write(out_frame.tobytes())
 

@@ -336,6 +336,7 @@ async fn upload_workspace_file(State(core): AppState, Json(body): Json<Value>) -
 
 async fn download_workspace_file(
     State(core): AppState,
+    headers: HeaderMap,
     Path(rel_path): Path<String>,
 ) -> std::result::Result<Response, ApiError> {
     let clean = rel_path.trim_start_matches('/').replace("..", "");
@@ -348,6 +349,8 @@ async fn download_workspace_file(
     let content_type = match ext.as_str() {
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
         "pdf" => "application/pdf",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -358,11 +361,44 @@ async fn download_workspace_file(
     let bytes = std::fs::read(&full)
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": e.to_string()})))?;
 
+    let total_len = bytes.len();
     let disposition = format!("inline; filename=\"{filename}\"");
+
+    // HTTP Range 请求支持 (HTML5 video 与 WebView2 流畅倍速与拖拽即时播放)
+    if let Some(range_header) = headers.get(axum::http::header::RANGE).and_then(|v| v.to_str().ok()) {
+        if let Some(spec) = range_header.strip_prefix("bytes=") {
+            let mut parts = spec.split('-');
+            let start = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+            let end = parts
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(total_len.saturating_sub(1))
+                .min(total_len.saturating_sub(1));
+
+            if start <= end && start < total_len {
+                let chunk = bytes[start..=end].to_vec();
+                let content_range = format!("bytes {start}-{end}/{total_len}");
+                return Ok((
+                    StatusCode::PARTIAL_CONTENT,
+                    [
+                        (axum::http::header::CONTENT_TYPE, content_type),
+                        (axum::http::header::CONTENT_DISPOSITION, disposition.as_str()),
+                        (axum::http::header::ACCEPT_RANGES, "bytes"),
+                        (axum::http::header::CONTENT_RANGE, content_range.as_str()),
+                    ],
+                    chunk,
+                )
+                    .into_response());
+            }
+        }
+    }
+
     Ok((
+        StatusCode::OK,
         [
             (axum::http::header::CONTENT_TYPE, content_type),
-            (axum::http::header::CONTENT_DISPOSITION, &disposition),
+            (axum::http::header::CONTENT_DISPOSITION, disposition.as_str()),
+            (axum::http::header::ACCEPT_RANGES, "bytes"),
         ],
         bytes,
     )
