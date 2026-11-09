@@ -77,6 +77,7 @@ export const api = {
     pip_style?: string;
     pip_scale?: number;
     output_path?: string;
+    custom_avatar_path?: string;
   }) => request<{
     ok: boolean;
     success: boolean;
@@ -86,10 +87,21 @@ export const api = {
     srt_path?: string;
     master_audio?: string;
   }>('/api/avatar/render', { method: 'POST', body: JSON.stringify(payload) }),
+  generateAvatarScript: (payload: {
+    content: string;
+    style?: string;
+    target_duration?: string;
+    model_id?: string;
+  }) => request<{ ok: boolean; script: string; length: number }>('/api/avatar/generate-script', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
   listWorkspaceFiles: () => request<{ files: Array<{ name: string; path: string; ext: string; size: number; modified: number }> }>('/api/workspace/files'),
   // 逐段编码：整段 encodeURIComponent 会把 "/" 编成 %2F，部分网关/反代会 404
   getArtifactUrl: (relPath: string) => {
-    const clean = relPath.replace(/^\/+/, '')
+    const normalized = relPath.replace(/\\/g, '/')
+    const idx = normalized.indexOf('/workspace/')
+    const clean = idx >= 0 ? normalized.slice(idx + '/workspace/'.length) : normalized.replace(/^\/+/, '')
     const encoded = clean.split('/').map(encodeURIComponent).join('/')
     return `${BASE}/api/workspace/download/${encoded}`
   },

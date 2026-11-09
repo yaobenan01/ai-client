@@ -33,8 +33,18 @@
     ],
     "resources": [
       "../../plugins/ppt-master/**/*",
+      "../../plugins/avatar-master/**/*",
       "../../sidecars/**/*"
     ],
+    "windows": {
+      "nsis": {
+        "languages": [
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    },
     "externalBin": [
       "binaries/ai-client"
     ]

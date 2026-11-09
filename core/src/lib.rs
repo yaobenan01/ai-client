@@ -928,7 +928,134 @@ impl Core {
                 req.ppt_video_path = Some(self.config.workspace_dir.join(p).to_string_lossy().to_string());
             }
         }
+        if let Some(custom) = &req.custom_avatar_path {
+            let p = PathBuf::from(custom);
+            if !p.is_absolute() {
+                req.custom_avatar_path = Some(self.config.workspace_dir.join(p).to_string_lossy().to_string());
+            }
+        }
         self.avatar.render(req)
+    }
+
+    pub async fn generate_avatar_script(
+        &self,
+        content: &str,
+        style: &str,
+        target_duration: &str,
+        model_id: Option<&str>,
+    ) -> Result<String> {
+        let (style_desc, target_words) = match style {
+            "academic" => ("严谨专业、结构严密、学术阐述风趣生动", match target_duration { "3m" => 680, "5m" => 1100, _ => 240 }),
+            "teaching" => ("循序渐进、亲切自然、注重步骤与互动答疑", match target_duration { "3m" => 650, "5m" => 1050, _ => 230 }),
+            "marketing" => ("节奏明快、生动引人、突出亮点与行动号召", match target_duration { "3m" => 720, "5m" => 1200, _ => 260 }),
+            _ => ("庄重大气、条理清晰、语调沉稳自然，适合工作汇报与公开展播", match target_duration { "3m" => 700, "5m" => 1150, _ => 250 }),
+        };
+
+        let system_prompt = format!(
+            "你是一位资深广播电视台主持人与数字人播报台词首席专家。\
+            请根据用户输入的文档材料、课件大纲或主题要点，撰写一份专供数字人主播口播的解说脚本。\n\
+            【写作规范】\n\
+            1. 风格定位：{style_desc}。\n\
+            2. 目标字数：约 {target_words} 字（适合自然口播语速）。\n\
+            3. 口语化表达：句子适度短促自然，标点清晰，有适当的设问与承上启下过渡句，严禁生硬罗列提纲编号。\n\
+            4. 纯净输出：仅输出可以直接念出的台词文案，严禁包含任何前缀注释、Markdown 标题、括号动作提示或舞台说明。"
+        );
+
+        let user_prompt = format!(
+            "请将以下材料内容提炼并生成为适于数字人主播口播的专业文案：\n\n```text\n{}\n```",
+            content
+        );
+
+        // Try model provider if configured
+        if let Some(profile) = self.models.resolve(model_id) {
+            if let Ok(provider) = profile.build() {
+                let messages = vec![
+                    crate::models::ChatMessage {
+                        role: "system".into(),
+                        content: system_prompt,
+                        ..Default::default()
+                    },
+                    crate::models::ChatMessage {
+                        role: "user".into(),
+                        content: user_prompt,
+                        ..Default::default()
+                    },
+                ];
+                if let Ok(resp) = provider.chat(&messages, &[], 2048).await {
+                    let cleaned = resp.content.trim().to_string();
+                    if !cleaned.is_empty() {
+                        return Ok(cleaned);
+                    }
+                }
+            }
+        }
+
+        // Offline heuristic fallback when LLM is not active or reachable
+        Ok(Self::heuristic_script_generator(content, style, target_words))
+    }
+
+    fn heuristic_script_generator(content: &str, style: &str, _target_words: usize) -> String {
+        let lines: Vec<&str> = content
+            .lines()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && !s.starts_with("<!--") && !s.starts_with("```"))
+            .collect();
+
+        let title = lines
+            .first()
+            .map(|s| s.trim_start_matches('#').trim())
+            .unwrap_or("核心工作汇报与业务分享");
+
+        let key_points: Vec<String> = lines
+            .iter()
+            .skip(1)
+            .filter(|s| s.starts_with('-') || s.starts_with('*') || s.starts_with('#') || s.chars().next().map_or(false, |c| c.is_ascii_digit()))
+            .map(|s| s.trim_start_matches(|c: char| c == '-' || c == '*' || c == '#' || c.is_ascii_digit() || c == '.' || c == '、').trim().to_string())
+            .filter(|s| !s.is_empty() && s.len() > 3)
+            .collect();
+
+        let (greeting, transition, ending) = match style {
+            "academic" => (
+                format!("各位专家学者、老师同学们好！今天我们共同探讨关于「{}」的研究要点与理论思考。", title),
+                "深入分析可以看出",
+                "总而言之，通过本次梳理与论证，我们获得了更加扎实的理论参考与实践指引。感谢大家的悉心聆听！"
+            ),
+            "teaching" => (
+                format!("同学们好，欢迎进入今天的在线微课堂。本期我们将深入学习「{}」的操作要领与核心知识点。", title),
+                "大家在实际操作时需要特别注意",
+                "以上就是今天重点讲解的实操全流程。建议大家结合系统对照练习，预祝大家学有所得，下期再见！"
+            ),
+            "marketing" => (
+                format!("哈喽大家好！今天为大家带来震撼首发的「{}」，带你一览全新一代前沿科技与卓越体验！", title),
+                "特别值得一提的亮点是",
+                "无论是卓越性能还是贴心设计，都能全面满足你的多元化需求。即刻开启全新旅程，让我们一起拥抱未来！"
+            ),
+            _ => (
+                format!("尊敬的各位领导、各位同仁：大家好！现在向大家系统汇报关于「{}」的核心进展与重点规划。", title),
+                "在接下来的推进过程中，我们将重点围绕以下几个维度",
+                "下一步，我们将继续以高标准、高效率推进各项重点工作落实落地，确保业务稳健高质量交付。感谢大家的聆听与支持！"
+            ),
+        };
+
+        let mut parts = vec![greeting];
+        if !key_points.is_empty() {
+            parts.push(format!("{}，本次主要围绕以下几个重点展开：", transition));
+            for (idx, pt) in key_points.iter().take(6).enumerate() {
+                let order = match idx {
+                    0 => "第一",
+                    1 => "第二",
+                    2 => "第三",
+                    3 => "第四",
+                    4 => "第五",
+                    _ => "最后",
+                };
+                parts.push(format!("{}，{}。针对这一要点，我们进行了系统性优化与严密验证，确保流程顺畅高效。", order, pt));
+            }
+        } else {
+            parts.push(format!("围绕这一核心议题，我们进行了多维度的调研与推演。深入贯彻全流程闭环标准，确保每一项指标严谨可控。"));
+        }
+        parts.push(ending.to_string());
+        parts.join(" ")
     }
 
     pub fn list_workspace_files(&self) -> Result<Vec<serde_json::Value>> {

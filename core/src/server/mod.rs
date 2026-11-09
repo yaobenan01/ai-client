@@ -32,6 +32,7 @@ pub fn router(core: Arc<Core>) -> Router {
         .route("/api/ppt/quick-video", post(quick_pptx_to_video))
         .route("/api/avatar/presets", get(list_avatar_presets))
         .route("/api/avatar/render", post(render_avatar_video))
+        .route("/api/avatar/generate-script", post(generate_avatar_script_handler))
         .route("/api/workspace/files", get(list_workspace_files))
         .route("/api/workspace/download/*path", get(download_workspace_file))
         .route("/api/workspace/open", post(open_workspace_artifact))
@@ -246,6 +247,25 @@ async fn render_avatar_video(State(core): AppState, Json(body): Json<crate::avat
         "avatar_id": res.avatar_id,
         "srt_path": res.srt_path,
         "master_audio": res.master_audio,
+    })))
+}
+
+async fn generate_avatar_script_handler(State(core): AppState, Json(body): Json<Value>) -> ApiResult {
+    let content = body.get("content").and_then(|v| v.as_str()).unwrap_or("").trim();
+    if content.is_empty() {
+        return Err(ApiError(StatusCode::BAD_REQUEST, json!({"error": "请输入或上传文案材料内容"})));
+    }
+    let style = body.get("style").and_then(|v| v.as_str()).unwrap_or("business");
+    let duration = body.get("target_duration").and_then(|v| v.as_str()).unwrap_or("1m");
+    let model_id = body.get("model_id").and_then(|v| v.as_str());
+
+    let script = core.generate_avatar_script(content, style, duration, model_id).await
+        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": e.to_string()})))?;
+
+    Ok(Json(json!({
+        "ok": true,
+        "script": script,
+        "length": script.chars().count()
     })))
 }
 

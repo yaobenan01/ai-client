@@ -22,7 +22,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from audio_pipeline import AudioPipeline
-from lipsync_onnx import LipsyncEngine, ensure_preset_assets
+from lipsync_onnx import LipsyncEngine, ensure_preset_assets, prepare_custom_avatar_assets
 from compositor import composite_standalone, composite_ppt_pip
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -65,7 +65,9 @@ def main():
     parser.add_argument("--mode", choices=["standalone", "ppt_pip"], default="standalone",
                         help="Synthesis mode: standalone anchor video or PPT PiP overlay")
     parser.add_argument("--avatar-id", default="boyang",
-                        help="Anchor preset identifier (e.g. boyang, wanqing, zhiming, xinyue)")
+                        help="Anchor preset identifier (e.g. boyang, wanqing, zhiming, xinyue, custom)")
+    parser.add_argument("--custom-avatar-media", default="",
+                        help="Custom anchor video or portrait photo file path (.mp4, .mov, .jpg, .png)")
     parser.add_argument("--presets-dir", default=str(default_presets_dir),
                         help="Directory containing anchor preset folders")
     parser.add_argument("--model-path", default=str(default_models_dir / "wav2lip.onnx"),
@@ -150,10 +152,15 @@ def main():
 
         logger.info(f"Master audio ready: {master_audio}")
 
-        # Step 2: Ensure Preset Assets
+        # Step 2: Ensure Preset Assets or Process Custom Avatar
         logger.info(">>> [Phase 2/4] Verifying Digital Human Preset Assets...")
-        preset_dir = Path(args.presets_dir) / args.avatar_id
-        preset_dir = ensure_preset_assets(str(preset_dir), args.avatar_id)
+        if args.custom_avatar_media and os.path.isfile(args.custom_avatar_media):
+            logger.info(f"Using custom avatar media: {args.custom_avatar_media}")
+            custom_dir = work_dir / "custom_avatar"
+            preset_dir = prepare_custom_avatar_assets(args.custom_avatar_media, str(custom_dir))
+        else:
+            preset_dir = Path(args.presets_dir) / args.avatar_id
+            preset_dir = ensure_preset_assets(str(preset_dir), args.avatar_id)
 
         # Step 3: Neural Lipsync Synthesis
         logger.info(">>> [Phase 3/4] Synthesizing Lipsync Frame Sequence...")

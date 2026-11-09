@@ -37,6 +37,7 @@ pub struct AvatarRenderRequest {
     pub pip_style: Option<String>,
     pub pip_scale: Option<f32>,
     pub output_path: Option<String>,
+    pub custom_avatar_path: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -236,6 +237,9 @@ impl AvatarRuntime {
         }
         if let Some(out) = &req.output_path {
             cmd.arg("--out").arg(out);
+        }
+        if let Some(custom) = &req.custom_avatar_path {
+            cmd.arg("--custom-avatar-media").arg(custom);
         }
 
         cmd.arg("--presets-dir").arg(&self.presets_dir);

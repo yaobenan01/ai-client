@@ -89,6 +89,8 @@ if ($Ffmpeg) {
     Write-Host "==> 准备 FFmpeg..." -ForegroundColor Cyan
     $zip = "$env:TEMP\ffmpeg-release-essentials.zip"
     $ffUrls = @(
+      "https://ghfast.top/https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip",
+      "https://mirror.ghproxy.com/https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip",
       "https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip",
       "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
       "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
@@ -224,14 +226,14 @@ if ($PythonStandalone) {
     tar -xzf $pyTar -C $dest --strip-components 1
     Remove-Item $pyTar -Force -ErrorAction SilentlyContinue
     
-    # 预装依赖
-    Write-Host "==> 预装 ppt-master & avatar-master Python 依赖..." -ForegroundColor Cyan
-    & "$dest\python.exe" -m pip install --upgrade pip
+    # 预装依赖（使用国内清华源高速镜像）
+    Write-Host "==> 预装 ppt-master & avatar-master Python 依赖（清华极速源）..." -ForegroundColor Cyan
+    & "$dest\python.exe" -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip
     if (Test-Path "$root\plugins\ppt-master\requirements.txt") {
-      & "$dest\python.exe" -m pip install -r "$root\plugins\ppt-master\requirements.txt"
+      & "$dest\python.exe" -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r "$root\plugins\ppt-master\requirements.txt"
     }
     if (Test-Path "$root\plugins\avatar-master\requirements.txt") {
-      & "$dest\python.exe" -m pip install -r "$root\plugins\avatar-master\requirements.txt"
+      & "$dest\python.exe" -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r "$root\plugins\avatar-master\requirements.txt"
     }
   } else {
     Write-Host "Python 已存在，跳过拉取。" -ForegroundColor Green

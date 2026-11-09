@@ -50,10 +50,26 @@ export default function AvatarStudio() {
   const [selectedAvatarId, setSelectedAvatarId] = useState('boyang')
   const [mode, setMode] = useState<'standalone' | 'ppt_pip'>('standalone')
 
-  // Script text
+  // Avatar source: preset vs custom uploaded material
+  const [avatarSourceMode, setAvatarSourceMode] = useState<'preset' | 'custom'>('preset')
+  const [customAvatarPath, setCustomAvatarPath] = useState('')
+  const [customAvatarName, setCustomAvatarName] = useState('')
+  const [customAvatarType, setCustomAvatarType] = useState<'video' | 'image'>('video')
+  const [customAvatarUrl, setCustomAvatarUrl] = useState('')
+
+  // Script text & editing mode
+  const [scriptMode, setScriptMode] = useState<'write' | 'file' | 'llm'>('write')
   const [scriptText, setScriptText] = useState(
     '尊敬的各位嘉宾：大家好！欢迎体验纯离线数字人主播系统。本系统基于端到端神经网络声画对齐与动态唇形重构技术，保障 25 FPS 广播级画质与自然口播韵律。'
   )
+
+  // LLM Script generation states
+  const [coursewarePath, setCoursewarePath] = useState('')
+  const [coursewareContent, setCoursewareContent] = useState('')
+  const [llmStyle, setLlmStyle] = useState<'business' | 'academic' | 'teaching' | 'marketing'>('business')
+  const [llmDuration, setLlmDuration] = useState<'1m' | '3m' | '5m'>('1m')
+  const [llmGenerating, setLlmGenerating] = useState(false)
+  const [llmSuccessMsg, setLlmSuccessMsg] = useState('')
 
   // Voice settings
   const [voice, setVoice] = useState('zh-CN-YunxiNeural')
@@ -75,6 +91,15 @@ export default function AvatarStudio() {
   // File input refs
   const pptxFileInputRef = useRef<HTMLInputElement>(null)
   const bgFileInputRef = useRef<HTMLInputElement>(null)
+  const customAvatarFileInputRef = useRef<HTMLInputElement>(null)
+  const scriptFileInputRef = useRef<HTMLInputElement>(null)
+  const coursewareFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Preview Workbench states
+  const [previewTab, setPreviewTab] = useState<'video' | 'avatar' | 'subtitles'>('video')
+  const [selectedPreviewVideoPath, setSelectedPreviewVideoPath] = useState('')
+  const [selectedPreviewVideoUrl, setSelectedPreviewVideoUrl] = useState('')
+  const videoPlayerRef = useRef<HTMLVideoElement>(null)
 
   // Loading & statuses
   const [loading, setLoading] = useState(false)
@@ -102,11 +127,18 @@ export default function AvatarStudio() {
 
       // Auto-detect newest PPTX file if not yet specified
       const ppts = files.filter((f: any) => ['pptx', 'ppt'].includes(f.ext))
-      if (ppts.length > 0) {
-        setPptxPath((prev) => (prev ? prev : ppts[0].path))
+      if (ppts.length > 0 && !pptxPath) {
+        setPptxPath(ppts[0].path)
+      }
+
+      // If no preview video selected, auto-select the latest MP4
+      const vids = files.filter((f: any) => ['mp4', 'mov'].includes(f.ext))
+      if (vids.length > 0 && !selectedPreviewVideoPath) {
+        setSelectedPreviewVideoPath(vids[0].path)
+        setSelectedPreviewVideoUrl(api.getArtifactUrl(vids[0].path))
       }
     } catch {}
-  }, [])
+  }, [pptxPath, selectedPreviewVideoPath])
 
   useEffect(() => {
     loadPresets()
@@ -116,6 +148,7 @@ export default function AvatarStudio() {
   // When anchor changes, update voice
   function handleSelectAvatar(preset: AvatarPreset) {
     setSelectedAvatarId(preset.id)
+    setAvatarSourceMode('preset')
     if (preset.default_voice) {
       setVoice(preset.default_voice)
     }
@@ -125,8 +158,93 @@ export default function AvatarStudio() {
   function applyTemplate(tpl: typeof TEMPLATE_SCRIPTS[0]) {
     setScriptText(tpl.text)
     setSelectedAvatarId(tpl.avatar)
+    setAvatarSourceMode('preset')
     setVoice(tpl.voice)
     setSpeechRate(tpl.rate)
+  }
+
+  // Handle custom avatar file selection (video or photo)
+  function handleCustomAvatarFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const path = (file as any).path || file.name
+    const isVid = file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/i.test(file.name)
+    setCustomAvatarPath(path)
+    setCustomAvatarName(file.name)
+    setCustomAvatarType(isVid ? 'video' : 'image')
+
+    const blobUrl = URL.createObjectURL(file)
+    setCustomAvatarUrl(blobUrl)
+    setAvatarSourceMode('custom')
+    setSelectedAvatarId('custom')
+    setPreviewTab('avatar')
+    e.target.value = ''
+  }
+
+  // Handle narration script file import (.txt / .md / .docx / .pdf)
+  function handleScriptFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const text = event.target?.result as string
+      if (text) {
+        setScriptText(text.trim())
+        setScriptMode('write')
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  // Handle courseware file selection for LLM script extraction
+  function handleCoursewareFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const path = (file as any).path || file.name
+    setCoursewarePath(path)
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const text = event.target?.result as string
+      if (text && typeof text === 'string') {
+        setCoursewareContent(text.slice(0, 8000))
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  // Invoke LLM to generate professional narration script from courseware / notes
+  async function handleGenerateScriptWithLLM() {
+    const inputContent = coursewareContent.trim() || coursewarePath.trim()
+    if (!inputContent) {
+      setErrorMsg('请先输入课件或材料要点，或上传课件文件')
+      return
+    }
+
+    setLlmGenerating(true)
+    setErrorMsg('')
+    setLlmSuccessMsg('')
+
+    try {
+      const res = await api.generateAvatarScript({
+        content: inputContent,
+        style: llmStyle,
+        target_duration: llmDuration
+      })
+
+      if (res && res.script) {
+        setScriptText(res.script)
+        setLlmSuccessMsg(`✨ 大模型已成功提炼并生成 ${res.length} 字的专业口播脚本！`)
+        setScriptMode('write')
+      } else {
+        throw new Error('未收到生成文案，请重试')
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || '大模型生成文案失败，请检查输入或模型配置')
+    } finally {
+      setLlmGenerating(false)
+    }
   }
 
   // Handle local background image/video selection
@@ -156,12 +274,11 @@ export default function AvatarStudio() {
     setLoading(true)
     setStatusMsg('')
     setErrorMsg('')
-    setLastResultPath('')
 
     try {
       const payload: any = {
         mode,
-        avatar_id: selectedAvatarId,
+        avatar_id: avatarSourceMode === 'custom' ? 'custom' : selectedAvatarId,
         text: scriptText.trim(),
         voice,
         rate: speechRate,
@@ -169,6 +286,13 @@ export default function AvatarStudio() {
         background: customBgPath || background,
         chroma_key: chromaKey,
         no_subtitles: !burnSubtitles,
+      }
+
+      if (avatarSourceMode === 'custom') {
+        if (!customAvatarPath) {
+          throw new Error('请先上传人物视频或照片素材')
+        }
+        payload.custom_avatar_path = customAvatarPath
       }
 
       if (mode === 'ppt_pip') {
@@ -187,6 +311,9 @@ export default function AvatarStudio() {
       if (res.success || res.ok) {
         setStatusMsg(`✓ 数字人视频合成成功！产物已归档至：${res.output_path}`)
         setLastResultPath(res.output_path)
+        setSelectedPreviewVideoPath(res.output_path)
+        setSelectedPreviewVideoUrl(api.getArtifactUrl(res.output_path))
+        setPreviewTab('video')
         await loadFiles()
       } else {
         throw new Error('合成未能完成，请检查输入或日志')
@@ -198,11 +325,61 @@ export default function AvatarStudio() {
     }
   }
 
-  const currentPreset = presets.find((p) => p.id === selectedAvatarId) || presets[0]
+  // Select a historical video to preview
+  function handleSelectHistoricalVideo(file: any) {
+    setSelectedPreviewVideoPath(file.path)
+    setSelectedPreviewVideoUrl(api.getArtifactUrl(file.path))
+    setPreviewTab('video')
+  }
+
+  const currentPreset = presets.find((p) => p.id === selectedAvatarId) || presets[0] || {
+    id: 'boyang',
+    name: '伯洋',
+    title: '资深金融/政务男主播',
+    avatar_badge: '权威沉稳',
+    default_voice: 'zh-CN-YunxiNeural',
+    description: '声音庄重清晰，适合政策解读与正式汇报。',
+    preview_color: '#1e293b',
+    tags: ['政务播报', '年终述职']
+  }
+
+  // Split script into clean subtitle preview sentences
+  const subtitleSentences = scriptText
+    .split(/([。！？!?\n]+)/)
+    .filter(Boolean)
+    .reduce((acc: string[], cur: string, idx: number, arr: string[]) => {
+      if (idx % 2 === 0) {
+        const punctuation = arr[idx + 1] || ''
+        const full = (cur + punctuation).trim()
+        if (full) acc.push(full)
+      }
+      return acc
+    }, [])
 
   return (
     <div className="page" style={{ maxWidth: 1440, margin: '0 auto', paddingBottom: 60 }}>
       {/* 隐藏的本地文件拾取器 */}
+      <input
+        ref={customAvatarFileInputRef}
+        type="file"
+        accept="video/mp4,video/quicktime,video/webm,image/png,image/jpeg,image/jpg"
+        style={{ display: 'none' }}
+        onChange={handleCustomAvatarFileSelected}
+      />
+      <input
+        ref={scriptFileInputRef}
+        type="file"
+        accept=".txt,.md,.markdown,.docx,.doc,.pdf,.json"
+        style={{ display: 'none' }}
+        onChange={handleScriptFileSelected}
+      />
+      <input
+        ref={coursewareFileInputRef}
+        type="file"
+        accept=".pptx,.ppt,.pdf,.docx,.doc,.md,.txt"
+        style={{ display: 'none' }}
+        onChange={handleCoursewareFileSelected}
+      />
       <input
         ref={bgFileInputRef}
         type="file"
@@ -225,18 +402,18 @@ export default function AvatarStudio() {
             <h2 style={{ margin: '0 0 6px', fontSize: 24, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10 }}>
               <span>🧑‍💼</span> 离线数字人主播演播厅
               <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.12)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.25)', fontSize: 12, padding: '2px 8px' }}>
-                纯离线 · 25 FPS
+                纯离线 · 25 FPS 广播级
               </span>
             </h2>
             <p className="muted" style={{ margin: 0, fontSize: 13.5 }}>
-              结合端到端神经网络声画对齐、语义断句韵律增强与 EBU R128 广播级母带，全流程无需联网，百分之百保障企业资产私密安全。
+              结合端到端神经网络声画对齐、语义断句韵律增强、原材料上传与大模型智能提炼口播，支持全流程视听预览，百分之百保障企业资产私密安全。
             </p>
           </div>
         </div>
       </div>
 
       {/* Two-column workbench layout with minmax(0, 1fr) preventing component squeeze */}
-      <div className="ppt-workbench" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 0.85fr)', gap: 24 }}>
+      <div className="ppt-workbench" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.12fr) minmax(0, 0.88fr)', gap: 24 }}>
         {/* LEFT COLUMN: Configuration Form */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Section 1: Mode Selection */}
@@ -245,19 +422,19 @@ export default function AvatarStudio() {
               <span style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>🎬</span> 呈现模式
               </span>
-              <span className="badge" style={{ fontSize: 11 }}>支持全屏及 PPT 演说</span>
+              <span className="badge" style={{ fontSize: 11 }}>支持全屏独立演播及 PPT 伴读</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <button
                 type="button"
-                className={`btn ${mode === 'standalone' ? 'btn-primary' : ''}`}
+                className={`btn ${mode === 'standalone' ? 'btn-primary' : 'ghost'}`}
                 style={{
                   height: 44,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: 8,
-                  border: mode === 'standalone' ? 'none' : '1px solid var(--border)'
+                  boxShadow: mode === 'standalone' ? undefined : 'none'
                 }}
                 onClick={() => setMode('standalone')}
               >
@@ -265,14 +442,14 @@ export default function AvatarStudio() {
               </button>
               <button
                 type="button"
-                className={`btn ${mode === 'ppt_pip' ? 'btn-primary' : ''}`}
+                className={`btn ${mode === 'ppt_pip' ? 'btn-primary' : 'ghost'}`}
                 style={{
                   height: 44,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: 8,
-                  border: mode === 'ppt_pip' ? 'none' : '1px solid var(--border)'
+                  boxShadow: mode === 'ppt_pip' ? undefined : 'none'
                 }}
                 onClick={() => setMode('ppt_pip')}
               >
@@ -281,109 +458,371 @@ export default function AvatarStudio() {
             </div>
           </div>
 
-          {/* Section 2: Anchor Persona Cards */}
+          {/* Section 2: Anchor Persona & Material Upload */}
           <div className="card" style={{ padding: '20px 22px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
               <span style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span>🎭</span> 预设精品数字人主播
+                <span>🎭</span> 主播形象与人物原材料
               </span>
-              <span className="muted" style={{ fontSize: 12 }}>点击卡片即可直接切换</span>
+              <div style={{ display: 'inline-flex', background: 'var(--surface-2)', padding: 3, borderRadius: 8, border: '1px solid var(--border-2)' }}>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 12px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: avatarSourceMode === 'preset' ? 'var(--accent)' : 'transparent',
+                    color: avatarSourceMode === 'preset' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => setAvatarSourceMode('preset')}
+                >
+                  🌟 精选预设主播
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 12px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: avatarSourceMode === 'custom' ? 'var(--accent)' : 'transparent',
+                    color: avatarSourceMode === 'custom' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => {
+                    setAvatarSourceMode('custom')
+                    setSelectedAvatarId('custom')
+                  }}
+                >
+                  👤 上传人物素材
+                </button>
+              </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
-              {(presets.length > 0 ? presets : [
-                { id: 'boyang', name: '伯洋', title: '资深金融/政务男主播', avatar_badge: '权威沉稳', default_voice: 'zh-CN-YunxiNeural', description: '声音庄重清晰，适合政策解读与正式汇报。', preview_color: '#1e293b', tags: ['政务播报', '年终述职'] },
-                { id: 'wanqing', name: '婉清', title: '优雅知性/新闻女主播', avatar_badge: '温和典雅', default_voice: 'zh-CN-XiaoxiaoNeural', description: '声线温润柔和，适合公司简介与科技早报。', preview_color: '#2d3748', tags: ['科技前沿', '品牌宣传'] },
-                { id: 'zhiming', name: '志明', title: '亲和商务/课件导师', avatar_badge: '亲和教学', default_voice: 'zh-CN-YunjianNeural', description: '表达生动亲切，适合微课与操作指南。', preview_color: '#1e3a5f', tags: ['培训课件', '操作指引'] },
-                { id: 'xinyue', name: '馨月', title: '青春活力/产品推介官', avatar_badge: '元气活力', default_voice: 'zh-CN-XiaoyiNeural', description: '声音灵动清脆，适合文旅宣传与新潮发布。', preview_color: '#3b1e3a', tags: ['文旅推广', '快闪发布'] },
-              ]).map((p) => {
-                const isSelected = selectedAvatarId === p.id
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => handleSelectAvatar(p as any)}
-                    style={{
-                      padding: '14px',
-                      borderRadius: 10,
-                      border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border)',
-                      background: isSelected ? 'rgba(99, 102, 241, 0.06)' : 'var(--card-bg, #fff)',
-                      cursor: 'pointer',
-                      transition: 'all 0.18s ease',
-                      position: 'relative'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div
+            {avatarSourceMode === 'preset' ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 12 }}>
+                {(presets.length > 0 ? presets : [
+                  { id: 'boyang', name: '伯洋', title: '资深金融/政务男主播', avatar_badge: '权威沉稳', default_voice: 'zh-CN-YunxiNeural', description: '声音庄重清晰，适合政策解读与正式汇报。', preview_color: '#1e293b', tags: ['政务播报', '年终述职'] },
+                  { id: 'wanqing', name: '婉清', title: '优雅知性/新闻女主播', avatar_badge: '温和典雅', default_voice: 'zh-CN-XiaoxiaoNeural', description: '声线温润柔和，适合公司简介与科技早报。', preview_color: '#2d3748', tags: ['科技前沿', '品牌宣传'] },
+                  { id: 'zhiming', name: '志明', title: '亲和商务/课件导师', avatar_badge: '亲和教学', default_voice: 'zh-CN-YunjianNeural', description: '表达生动亲切，适合微课与操作指南。', preview_color: '#1e3a5f', tags: ['培训课件', '操作指引'] },
+                  { id: 'xinyue', name: '馨月', title: '青春活力/产品推介官', avatar_badge: '元气活力', default_voice: 'zh-CN-XiaoyiNeural', description: '声音灵动清脆，适合文旅宣传与新潮发布。', preview_color: '#3b1e3a', tags: ['文旅推广', '快闪发布'] },
+                ]).map((p) => {
+                  const isSelected = selectedAvatarId === p.id && avatarSourceMode === 'preset'
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => handleSelectAvatar(p as any)}
+                      style={{
+                        padding: '14px',
+                        borderRadius: 10,
+                        border: isSelected ? '2px solid var(--accent)' : '1px solid var(--border-2)',
+                        background: isSelected ? 'rgba(99, 102, 241, 0.06)' : 'var(--surface-2)',
+                        cursor: 'pointer',
+                        transition: 'all 0.18s ease',
+                        position: 'relative'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div
+                            style={{
+                              width: 34,
+                              height: 34,
+                              borderRadius: '50%',
+                              background: p.preview_color || '#333',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: '#fff',
+                              fontWeight: 700,
+                              fontSize: 14
+                            }}
+                          >
+                            {p.name.slice(0, 1)}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
+                          </div>
+                        </div>
+                        <span
+                          className="badge"
                           style={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: '50%',
-                            background: p.preview_color || '#333',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: '#fff',
-                            fontWeight: 700,
-                            fontSize: 13
+                            fontSize: 10.5,
+                            background: isSelected ? 'var(--accent)' : 'rgba(0,0,0,0.06)',
+                            color: isSelected ? '#fff' : 'inherit'
                           }}
                         >
-                          {p.name.slice(0, 1)}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
-                        </div>
+                          {p.avatar_badge}
+                        </span>
                       </div>
-                      <span
-                        className="badge"
-                        style={{
-                          fontSize: 10.5,
-                          background: isSelected ? 'var(--accent)' : 'rgba(0,0,0,0.06)',
-                          color: isSelected ? '#fff' : 'inherit'
+                      <div className="muted" style={{ fontSize: 11.5, marginBottom: 8, lineHeight: 1.4 }}>
+                        {p.title}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {(p.tags || []).slice(0, 2).map((t, idx) => (
+                          <span key={idx} style={{ fontSize: 10, padding: '2px 6px', background: 'rgba(0,0,0,0.04)', borderRadius: 4 }}>
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              /* Custom Avatar Material Upload Box */
+              <div style={{ padding: '16px', background: 'var(--surface-2)', border: '1px dashed var(--border-2)', borderRadius: 10 }}>
+                {customAvatarPath ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      {customAvatarUrl ? (
+                        customAvatarType === 'video' ? (
+                          <video
+                            src={customAvatarUrl}
+                            style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover', background: '#000' }}
+                            muted
+                            autoPlay
+                            loop
+                          />
+                        ) : (
+                          <img
+                            src={customAvatarUrl}
+                            alt="preview"
+                            style={{ width: 64, height: 64, borderRadius: 8, objectFit: 'cover' }}
+                          />
+                        )
+                      ) : (
+                        <div style={{ width: 64, height: 64, borderRadius: 8, background: 'var(--accent-soft)', display: 'grid', placeItems: 'center', fontSize: 24 }}>
+                          👤
+                        </div>
+                      )}
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{customAvatarName || '已选人物素材'}</div>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                          {customAvatarType === 'video' ? '🎬 视频人物素材 (自动截帧循环)' : '🖼️ 高清肖像相片 (自动构建呼吸循环)'}
+                        </div>
+                        <span className="badge done" style={{ fontSize: 11, marginTop: 4 }}>✅ 人物底模已就绪</span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        onClick={() => customAvatarFileInputRef.current?.click()}
+                      >
+                        重新上传素材
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        style={{ color: 'var(--err)' }}
+                        onClick={() => {
+                          setCustomAvatarPath('')
+                          setCustomAvatarUrl('')
+                          setAvatarSourceMode('preset')
+                          setSelectedAvatarId('boyang')
                         }}
                       >
-                        {p.avatar_badge}
-                      </span>
-                    </div>
-                    <div className="muted" style={{ fontSize: 11.5, marginBottom: 8, lineHeight: 1.4 }}>
-                      {p.title}
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {(p.tags || []).slice(0, 2).map((t, idx) => (
-                        <span key={idx} style={{ fontSize: 10, padding: '2px 6px', background: 'rgba(0,0,0,0.04)', borderRadius: 4 }}>
-                          {t}
-                        </span>
-                      ))}
+                        清空
+                      </button>
                     </div>
                   </div>
-                )
-              })}
-            </div>
+                ) : (
+                  <div
+                    style={{ textAlign: 'center', padding: '24px 16px', cursor: 'pointer' }}
+                    onClick={() => customAvatarFileInputRef.current?.click()}
+                  >
+                    <div style={{ fontSize: 32, marginBottom: 8 }}>📹 👤</div>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)', marginBottom: 4 }}>
+                      点击上传人物视频素材或高清正脸肖像照片
+                    </div>
+                    <p className="muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
+                      支持 MP4 / MOV 原生出镜视频（自动抽取底模循环）或 JPG / PNG 高清人像（自动构建生理微呼吸动作）
+                    </p>
+                    <button type="button" className="btn sm">
+                      📁 浏览本地人物素材...
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Section 3: Script & Narration Content */}
+          {/* Section 3: Script, File Import & LLM Generation */}
           <div className="card" style={{ padding: '20px 22px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
               <span style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>📝</span> 播报脚本与口播文案
               </span>
-              <span className="muted" style={{ fontSize: 12 }}>已输入 {scriptText.length} 字</span>
+              <div style={{ display: 'inline-flex', background: 'var(--surface-2)', padding: 3, borderRadius: 8, border: '1px solid var(--border-2)' }}>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: scriptMode === 'write' ? 'var(--accent)' : 'transparent',
+                    color: scriptMode === 'write' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => setScriptMode('write')}
+                >
+                  ✍️ 手动编写
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: scriptMode === 'file' ? 'var(--accent)' : 'transparent',
+                    color: scriptMode === 'file' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => {
+                    setScriptMode('file')
+                    scriptFileInputRef.current?.click()
+                  }}
+                >
+                  📄 导入脚本文件
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: scriptMode === 'llm' ? 'var(--accent)' : 'transparent',
+                    color: scriptMode === 'llm' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => setScriptMode('llm')}
+                >
+                  ✨ AI 提炼课件口播
+                </button>
+              </div>
             </div>
 
-            {/* Quick Templates */}
+            {/* AI Courseware Script Extraction Drawer */}
+            {scriptMode === 'llm' && (
+              <div style={{ padding: '16px', background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.08) 100%)', border: '1px solid rgba(99, 102, 241, 0.25)', borderRadius: 10, marginBottom: 16 }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--accent)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>✨</span> 上传课件/材料，通过大模型一键提炼专业口播文案
+                </div>
+                <p className="muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
+                  支持上传 PPTX、PDF、Word 或 Markdown 文档，大模型将自动提炼核心论点，优化口播声律与自然过渡停顿。
+                </p>
+
+                {/* Upload courseware file row */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="可上传课件文件（PPTX / PDF / Word / TXT / Markdown）"
+                    value={coursewarePath}
+                    onChange={(e) => setCoursewarePath(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    style={{ whiteSpace: 'nowrap', height: 42 }}
+                    onClick={() => coursewareFileInputRef.current?.click()}
+                  >
+                    📁 上传课件文件
+                  </button>
+                </div>
+
+                {/* Or paste content directly */}
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="或直接在此粘贴课件大纲、会议纪要、要点内容..."
+                  value={coursewareContent}
+                  onChange={(e) => setCoursewareContent(e.target.value)}
+                  style={{ width: '100%', marginBottom: 12, fontSize: 12.5 }}
+                />
+
+                {/* Style and duration controls */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <label className="muted" style={{ display: 'block', fontSize: 11.5, marginBottom: 4 }}>口播风格定位</label>
+                    <select
+                      className="input"
+                      value={llmStyle}
+                      onChange={(e) => setLlmStyle(e.target.value as any)}
+                    >
+                      <option value="business">💼 商务政务 / 权威述职 (庄重大气)</option>
+                      <option value="academic">🎓 学术汇报 / 课件微课 (严谨专业)</option>
+                      <option value="teaching">🌟 通俗生动 / 科普解说 (循序渐进)</option>
+                      <option value="marketing">🚀 爆款营销 / 新潮推介 (节奏明快)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="muted" style={{ display: 'block', fontSize: 11.5, marginBottom: 4 }}>目标口播时长与篇幅</label>
+                    <select
+                      className="input"
+                      value={llmDuration}
+                      onChange={(e) => setLlmDuration(e.target.value as any)}
+                    >
+                      <option value="1m">⚡ 1 分钟精要速览 (~250 字)</option>
+                      <option value="3m">⏱️ 3 分钟标准宣讲 (~700 字)</option>
+                      <option value="5m">📖 5 分钟深度讲透 (~1200 字)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={llmGenerating}
+                    onClick={handleGenerateScriptWithLLM}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    {llmGenerating ? (
+                      <>
+                        <span className="spinner" style={{ width: 14, height: 14, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                        <span>大模型深度提炼中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>✨ 启动大模型提炼口播文案</span>
+                      </>
+                    )}
+                  </button>
+                  {llmSuccessMsg && (
+                    <span style={{ fontSize: 12, color: 'var(--ok)', fontWeight: 600 }}>{llmSuccessMsg}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Templates Bar */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-              <span className="muted" style={{ fontSize: 12 }}>常用模板：</span>
+              <span className="muted" style={{ fontSize: 12 }}>选用模板：</span>
               {TEMPLATE_SCRIPTS.map((tpl, i) => (
                 <button
                   key={i}
                   type="button"
-                  className="btn btn-secondary"
-                  style={{ padding: '4px 10px', fontSize: 11.5, height: 'auto' }}
+                  className="btn ghost sm"
+                  style={{ padding: '3px 9px', fontSize: 11.5 }}
                   onClick={() => applyTemplate(tpl)}
                 >
                   {tpl.name}
                 </button>
               ))}
+              <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>当前字数：{scriptText.length} 字</span>
             </div>
 
             <textarea
@@ -402,41 +841,40 @@ export default function AvatarStudio() {
               <span>🎙️</span> 声音表现与视觉合成配置
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 16 }}>
+            {/* Dropdown Grid: ample width, no font clipping, native chevron */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 16 }}>
               {/* Voice selector */}
               <div>
-                <label className="muted" style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>
+                <label className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
                   口播音色
                 </label>
                 <select
                   className="input"
-                  style={{ width: '100%', height: 38 }}
                   value={voice}
                   onChange={(e) => setVoice(e.target.value)}
                 >
                   <optgroup label="激情演讲 / 权威男声">
-                    <option value="zh-CN-YunxiNeural">云希 · 激情宣讲 / 演说男声 (推荐)</option>
-                    <option value="zh-CN-YunjianNeural">云健 · 沉稳专业 / 影视旁白</option>
-                    <option value="zh-CN-YunyangNeural">云扬 · 专业新闻播音主持</option>
+                    <option value="zh-CN-YunxiNeural">🎙️ 云希 · 激情宣讲 / 演说男声 (推荐)</option>
+                    <option value="zh-CN-YunjianNeural">🎙️ 云健 · 沉稳专业 / 影视旁白</option>
+                    <option value="zh-CN-YunyangNeural">🎙️ 云扬 · 专业新闻播音主持</option>
                   </optgroup>
                   <optgroup label="优雅温和 / 知性女声">
-                    <option value="zh-CN-XiaoxiaoNeural">晓晓 · 知性温和 / 优雅女声</option>
-                    <option value="zh-CN-XiaoyiNeural">晓伊 · 青春活泼 / 灵动女声</option>
+                    <option value="zh-CN-XiaoxiaoNeural">🎙️ 晓晓 · 知性温和 / 优雅女声</option>
+                    <option value="zh-CN-XiaoyiNeural">🎙️ 晓伊 · 青春活泼 / 灵动女声</option>
                   </optgroup>
                   <optgroup label="纯离线 Piper 独立音色">
-                    <option value="zh_CN-huayan-medium">华严 · 离线中性教学音色</option>
+                    <option value="zh_CN-huayan-medium">💻 华严 · 离线中性教学音色</option>
                   </optgroup>
                 </select>
               </div>
 
               {/* Speech rate */}
               <div>
-                <label className="muted" style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>
+                <label className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
                   语速与口播节奏
                 </label>
                 <select
                   className="input"
-                  style={{ width: '100%', height: 38 }}
                   value={speechRate}
                   onChange={(e) => setSpeechRate(e.target.value)}
                 >
@@ -450,30 +888,29 @@ export default function AvatarStudio() {
 
               {/* TTS Strategy */}
               <div>
-                <label className="muted" style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>
+                <label className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
                   合成引擎策略
                 </label>
                 <select
                   className="input"
-                  style={{ width: '100%', height: 38 }}
                   value={ttsEngine}
                   onChange={(e) => setTtsEngine(e.target.value)}
                 >
                   <option value="auto">智能双擎 (在线神经音色，离线无缝降级)</option>
-                  <option value="piper">纯离线 Piper (零联网强制依赖)</option>
+                  <option value="piper">纯离线 Piper (零网络强制依赖)</option>
                 </select>
               </div>
 
               {/* Background Preset (for standalone mode) */}
               {mode === 'standalone' && (
                 <div>
-                  <label className="muted" style={{ display: 'block', fontSize: 12, marginBottom: 6 }}>
+                  <label className="muted" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
                     演播厅背景
                   </label>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <select
                       className="input"
-                      style={{ flex: 1, height: 38 }}
+                      style={{ flex: 1 }}
                       value={background}
                       onChange={(e) => {
                         setBackground(e.target.value)
@@ -483,13 +920,13 @@ export default function AvatarStudio() {
                       <option value="studio_blue">🏛️ 虚拟演播厅 (深蓝夜幕)</option>
                       <option value="tech_dark">🌃 极客科技 (深空暗灰)</option>
                       <option value="minimal_white">🏢 极简商务 (素雅纯白)</option>
-                      <option value="none">👤 原生主播底镜</option>
+                      <option value="none">👤 原生主播底模</option>
                       {customBgPath && <option value={customBgPath}>📁 自定义本地背景</option>}
                     </select>
                     <button
                       type="button"
-                      className="btn btn-secondary"
-                      style={{ height: 38, padding: '0 10px', fontSize: 12, whiteSpace: 'nowrap' }}
+                      className="btn ghost sm"
+                      style={{ height: 42, padding: '0 12px', flexShrink: 0 }}
                       onClick={() => bgFileInputRef.current?.click()}
                       title="选择本地图片或视频作为背景"
                     >
@@ -502,11 +939,11 @@ export default function AvatarStudio() {
 
             {/* PPT PiP Settings (if mode === 'ppt_pip') */}
             {mode === 'ppt_pip' && (
-              <div style={{ padding: '14px', background: 'rgba(0,0,0,0.03)', borderRadius: 8, marginBottom: 16 }}>
+              <div style={{ padding: '14px', background: 'var(--surface-2)', borderRadius: 8, marginBottom: 16 }}>
                 <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span>🖼️</span> 画中画叠加参数
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 10 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 10 }}>
                   <div>
                     <label className="muted" style={{ display: 'block', fontSize: 11.5, marginBottom: 4 }}>
                       PPT 文稿路径
@@ -515,15 +952,15 @@ export default function AvatarStudio() {
                       <input
                         type="text"
                         className="input"
-                        style={{ flex: 1, height: 34, fontSize: 12 }}
                         value={pptxPath}
                         onChange={(e) => setPptxPath(e.target.value)}
                         placeholder="exports/presentation.pptx"
+                        style={{ flex: 1 }}
                       />
                       <button
                         type="button"
-                        className="btn btn-secondary"
-                        style={{ height: 34, padding: '0 8px', fontSize: 11.5 }}
+                        className="btn ghost sm"
+                        style={{ height: 42, flexShrink: 0 }}
                         onClick={() => pptxFileInputRef.current?.click()}
                       >
                         选择...
@@ -536,7 +973,6 @@ export default function AvatarStudio() {
                     </label>
                     <select
                       className="input"
-                      style={{ width: '100%', height: 34, fontSize: 12 }}
                       value={pipPos}
                       onChange={(e) => setPipPos(e.target.value as any)}
                     >
@@ -551,7 +987,6 @@ export default function AvatarStudio() {
                     </label>
                     <select
                       className="input"
-                      style={{ width: '100%', height: 34, fontSize: 12 }}
                       value={pipStyle}
                       onChange={(e) => setPipStyle(e.target.value as any)}
                     >
@@ -572,7 +1007,7 @@ export default function AvatarStudio() {
                   checked={burnSubtitles}
                   onChange={(e) => setBurnSubtitles(e.target.checked)}
                 />
-                <span>烧录精准同步字幕（自动根据停顿生成微黑底白字 SRT）</span>
+                <span>烧录精准同步字幕（自动根据标点与呼吸节奏生成微黑底白字 SRT）</span>
               </label>
 
               {mode === 'standalone' && (
@@ -592,7 +1027,7 @@ export default function AvatarStudio() {
           <div>
             <button
               type="button"
-              className="btn btn-primary"
+              className="btn"
               style={{
                 width: '100%',
                 height: 48,
@@ -652,72 +1087,310 @@ export default function AvatarStudio() {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Functional Guide & Artifacts Preview */}
+        {/* RIGHT COLUMN: Interactive Multi-Modal Audio-Visual Studio */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-          {/* Functional Instructions Box */}
-          <div className="ppt-tip-box" style={{ background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.08) 100%)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: 12, padding: '20px' }}>
-            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, color: 'var(--accent, #6366f1)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Main Interactive Studio Preview Card */}
+          <div className="card" style={{ padding: '20px 22px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <span style={{ fontWeight: 700, fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>📺</span> 数字人视听预览工作台
+                </span>
+                <span className="muted" style={{ fontSize: 12 }}>支持成片播放、素材底模审校与字幕对齐</span>
+              </div>
+              <div style={{ display: 'inline-flex', background: 'var(--surface-2)', padding: 3, borderRadius: 8, border: '1px solid var(--border-2)' }}>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: previewTab === 'video' ? 'var(--accent)' : 'transparent',
+                    color: previewTab === 'video' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => setPreviewTab('video')}
+                >
+                  🎬 成片播放
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: previewTab === 'avatar' ? 'var(--accent)' : 'transparent',
+                    color: previewTab === 'avatar' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => setPreviewTab('avatar')}
+                >
+                  👤 底模素材
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    border: 'none',
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    background: previewTab === 'subtitles' ? 'var(--accent)' : 'transparent',
+                    color: previewTab === 'subtitles' ? '#fff' : 'var(--text-2)'
+                  }}
+                  onClick={() => setPreviewTab('subtitles')}
+                >
+                  📑 台词字幕
+                </button>
+              </div>
+            </div>
+
+            {/* TAB 1: Synthesized Video Player */}
+            {previewTab === 'video' && (
+              <div>
+                {selectedPreviewVideoUrl || lastResultPath ? (
+                  <div>
+                    <div style={{ position: 'relative', width: '100%', borderRadius: 10, overflow: 'hidden', background: '#000', marginBottom: 12 }}>
+                      <video
+                        ref={videoPlayerRef}
+                        src={selectedPreviewVideoUrl || api.getArtifactUrl(lastResultPath)}
+                        controls
+                        style={{ width: '100%', maxHeight: 340, display: 'block' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <span className="badge done" style={{ fontSize: 11 }}>25 FPS 广播级 1080P</span>
+                        <span className="badge" style={{ fontSize: 11, background: 'rgba(99, 102, 241, 0.1)', color: 'var(--accent)' }}>
+                          EBU R128 (-16 LUFS)
+                        </span>
+                        <span className="badge" style={{ fontSize: 11 }}>动态唇形对齐</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {selectedPreviewVideoPath && (
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            onClick={() => api.revealArtifact(selectedPreviewVideoPath)}
+                            title="在系统资源管理器中定位文件"
+                          >
+                            📂 浏览文件
+                          </button>
+                        )}
+                        {selectedPreviewVideoPath && (
+                          <a
+                            href={selectedPreviewVideoUrl || api.getArtifactUrl(selectedPreviewVideoPath)}
+                            download
+                            className="btn sm"
+                            style={{ textDecoration: 'none' }}
+                          >
+                            ⬇️ 下载
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    {selectedPreviewVideoPath && (
+                      <div className="muted mono" style={{ fontSize: 11.5, background: 'var(--surface-2)', padding: '6px 10px', borderRadius: 6, wordBreak: 'break-all' }}>
+                        {selectedPreviewVideoPath}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '48px 20px', background: 'var(--surface-2)', borderRadius: 10, border: '1px dashed var(--border-2)' }}>
+                    <div style={{ fontSize: 40, marginBottom: 10 }}>🎬 📺</div>
+                    <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>暂无数字人成片可供播放</div>
+                    <p className="muted" style={{ fontSize: 13, margin: '0 0 16px', maxWidth: 420, marginInline: 'auto' }}>
+                      请在左侧设定主播、文案与音色后，点击「启动离线数字人视频合成」；或者在下方交付产物库中点击已有视频直接调入播放。
+                    </p>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={handleSynthesize}
+                      disabled={loading}
+                    >
+                      ✨ 立即合成首支出镜成片
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 2: Anchor Raw Material Preview */}
+            {previewTab === 'avatar' && (
+              <div>
+                {avatarSourceMode === 'custom' && customAvatarUrl ? (
+                  <div>
+                    <div style={{ position: 'relative', width: '100%', borderRadius: 10, overflow: 'hidden', background: '#0a0a0f', marginBottom: 12 }}>
+                      {customAvatarType === 'video' ? (
+                        <video
+                          src={customAvatarUrl}
+                          controls
+                          autoPlay
+                          loop
+                          muted
+                          style={{ width: '100%', maxHeight: 320, display: 'block', margin: '0 auto' }}
+                        />
+                      ) : (
+                        <img
+                          src={customAvatarUrl}
+                          alt="custom anchor"
+                          style={{ width: '100%', maxHeight: 320, objectFit: 'contain', display: 'block', margin: '0 auto' }}
+                        />
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{customAvatarName}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {customAvatarType === 'video' ? '自采人物视频素材 · 往复平滑' : '自采单张人像素材 · 微动呼吸'}
+                        </div>
+                      </div>
+                      <span className="badge done">底模就绪</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 10 }}>
+                      <div
+                        style={{
+                          width: 54,
+                          height: 54,
+                          borderRadius: '50%',
+                          background: currentPreset?.preview_color || '#333',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#fff',
+                          fontWeight: 700,
+                          fontSize: 22
+                        }}
+                      >
+                        {currentPreset?.name?.slice(0, 1)}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 16 }}>{currentPreset?.name}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{currentPreset?.title}</div>
+                        <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>{currentPreset?.avatar_badge}</div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                      <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 8 }}>
+                        <div className="muted" style={{ fontSize: 11 }}>采样频率</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, marginTop: 2 }}>25.0 FPS 广播级</div>
+                      </div>
+                      <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 8 }}>
+                        <div className="muted" style={{ fontSize: 11 }}>人脸唇形网格</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, marginTop: 2 }}>椭圆高斯羽化融合</div>
+                      </div>
+                      <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 8 }}>
+                        <div className="muted" style={{ fontSize: 11 }}>生理微动作</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, marginTop: 2 }}>自然呼吸 + 眨眼循环</div>
+                      </div>
+                      <div style={{ padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 8 }}>
+                        <div className="muted" style={{ fontSize: 11 }}>音频母带标准</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, marginTop: 2 }}>EBU R128 (-16 LUFS)</div>
+                      </div>
+                    </div>
+
+                    <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.6, background: 'var(--surface-2)', padding: '12px', borderRadius: 8 }}>
+                      {currentPreset?.description}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: Sentence-by-Sentence Subtitle & Timestamp Inspector */}
+            {previewTab === 'subtitles' && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <span className="muted" style={{ fontSize: 12 }}>字幕台词共 {subtitleSentences.length} 句（标点语义自动切分）</span>
+                  <span className="badge done" style={{ fontSize: 11 }}>自动生成 SRT</span>
+                </div>
+                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {subtitleSentences.map((sentence, sIdx) => {
+                    const estStartSec = sIdx * 3.2
+                    const estEndSec = (sIdx + 1) * 3.2
+                    const formatSec = (s: number) => {
+                      const m = Math.floor(s / 60)
+                      const sec = Math.floor(s % 60)
+                      return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+                    }
+
+                    return (
+                      <div
+                        key={sIdx}
+                        onClick={() => {
+                          if (videoPlayerRef.current) {
+                            videoPlayerRef.current.currentTime = estStartSec
+                            videoPlayerRef.current.play()
+                          }
+                          setPreviewTab('video')
+                        }}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          background: 'var(--surface-2)',
+                          border: '1px solid var(--border-2)',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title="点击在播放器中跳转至该时间段"
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <span className="mono" style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600 }}>
+                            [{formatSec(estStartSec)} - {formatSec(estEndSec)}]
+                          </span>
+                          <span className="muted" style={{ fontSize: 11 }}>#0{sIdx + 1}</span>
+                        </div>
+                        <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text)' }}>
+                          {sentence}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Functional Architecture Assurance Box */}
+          <div className="ppt-tip-box" style={{ background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.08) 100%)', border: '1px solid rgba(99, 102, 241, 0.2)', borderRadius: 12, padding: '18px 20px' }}>
+            <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 10, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <span>💡</span> 功能设计与核心技术保障说明
             </div>
-            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.8, color: 'var(--text-secondary, #475569)' }}>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.75, color: 'var(--text-2)' }}>
               <li>
-                <strong>纯离线安全沙箱：</strong>通过自包含 Python 运行时与 ONNX Runtime 直接驱动本地算法模型，文案与声画绝不上传云端，完全满足金融与政务内网安全保密需求。
+                <strong>纯离线安全沙箱：</strong>自包含 Python 运行时与 ONNX Runtime 直接驱动本地算法，原材料、视频与文案绝不上云。
               </li>
               <li>
-                <strong>25 FPS 画面流畅度：</strong>采用视频底模往复乒乓循环技术，配合椭圆高斯羽化融合遮罩与 EMA 时域平滑滤波，消除嘴周方形硬接缝与动作顿挫。
+                <strong>25 FPS 画面流畅度：</strong>采用视频底模往复乒乓技术与高斯双向羽化融合，消除嘴周硬接缝与动作顿挫。
               </li>
               <li>
-                <strong>动态呼吸与广播级人声：</strong>根据标点符号自动计算生理呼吸停顿，并施加 75Hz 高通滤波、共鸣均衡、动态压限以及 EBU R128 (-16 LUFS) 响度标准化。
+                <strong>大模型智能提炼：</strong>支持直接导入课件、PDF、文档材料，大模型自动提炼口播文案，保障表达生动专业。
               </li>
               <li>
-                <strong>开箱即用与容灾降级：</strong>模型缺失时自动启动高保真声学几何唇形引擎，保障生产流水线永不中断崩溃。
+                <strong>开箱即用与容灾降级：</strong>声学几何唇形引擎与 Piper 离线语音互为容灾，无网或缺件时保障流水线不中断。
               </li>
             </ul>
           </div>
 
-          {/* Current Selection Status Summary */}
-          <div className="card" style={{ padding: '18px 20px' }}>
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>
-              <span>📌</span> 当前选定主播信息
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12 }}>
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: '50%',
-                  background: currentPreset?.preview_color || '#333',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#fff',
-                  fontWeight: 700,
-                  fontSize: 20
-                }}
-              >
-                {currentPreset?.name?.slice(0, 1)}
-              </div>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 16 }}>{currentPreset?.name}</div>
-                <div className="muted" style={{ fontSize: 12 }}>{currentPreset?.title}</div>
-                <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 2 }}>{currentPreset?.avatar_badge}</div>
-              </div>
-            </div>
-            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.5, background: 'rgba(0,0,0,0.02)', padding: '10px 12px', borderRadius: 6 }}>
-              {currentPreset?.description}
-            </div>
-          </div>
-
-          {/* Recent Video Deliverables */}
+          {/* Deliverables Library (Videos & Documents) */}
           <div className="card" style={{ padding: '18px 20px', flex: 1 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>
-                <span>📦</span> 交付产物库（视频 & 文档）
+              <span style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span>📦</span> 交付产物库（点击可直接调入预览播放）
               </span>
               <button
                 type="button"
-                className="btn btn-secondary"
-                style={{ padding: '3px 8px', fontSize: 11.5, height: 'auto' }}
+                className="btn ghost sm"
+                style={{ padding: '3px 8px', fontSize: 11.5 }}
                 onClick={loadFiles}
               >
                 刷新
@@ -729,13 +1402,26 @@ export default function AvatarStudio() {
                 暂无历史生成视频，点击左侧按钮立即生成第一支数字人视频
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflowY: 'auto' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 360, overflowY: 'auto' }}>
                 {workspaceFiles
                   .filter((f) => ['mp4', 'mov', 'pptx'].includes(f.ext))
-                  .slice(0, 8)
-                  .map((f, idx) => (
-                    <ArtifactCard key={idx} path={f.path} name={f.name} size={f.size} compact />
-                  ))}
+                  .slice(0, 10)
+                  .map((f, idx) => {
+                    const isPlaying = selectedPreviewVideoPath === f.path
+                    return (
+                      <div
+                        key={idx}
+                        onClick={() => ['mp4', 'mov'].includes(f.ext) && handleSelectHistoricalVideo(f)}
+                        style={{
+                          cursor: ['mp4', 'mov'].includes(f.ext) ? 'pointer' : 'default',
+                          borderRadius: 8,
+                          outline: isPlaying ? '2px solid var(--accent)' : 'none'
+                        }}
+                      >
+                        <ArtifactCard path={f.path} name={f.name} size={f.size} compact />
+                      </div>
+                    )
+                  })}
               </div>
             )}
           </div>

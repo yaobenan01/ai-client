@@ -345,6 +345,61 @@ def ensure_preset_assets(preset_dir_path: str, avatar_id: str) -> str:
     return str(preset_dir)
 
 
+def prepare_custom_avatar_assets(media_path: str, output_dir_path: str) -> str:
+    """Extracts frames from custom user-uploaded video or portrait photo."""
+    import cv2
+    out_dir = Path(output_dir_path).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frames_dir = out_dir / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    face_boxes_file = out_dir / "face_boxes.npy"
+
+    media_p = Path(media_path).resolve()
+    if not media_p.exists():
+        raise FileNotFoundError(f"自定义人物素材不存在: {media_path}")
+
+    ext = media_p.suffix.lower()
+
+    if ext in (".mp4", ".mov", ".mkv", ".avi", ".webm"):
+        cap = cv2.VideoCapture(str(media_p))
+        idx = 0
+        while cap.isOpened() and idx < 150: # 最多抽取 150 帧 (约 6 秒基础往复循环)
+            ret, f = cap.read()
+            if not ret:
+                break
+            cv2.imwrite(str(frames_dir / f"{idx:05d}.jpg"), f)
+            idx += 1
+        cap.release()
+    else:
+        # 静态单张肖像图：构建 50 帧细微呼吸动作循环
+        img = cv2.imread(str(media_p))
+        if img is None:
+            raise ValueError(f"无法读取肖像图片: {media_p}")
+        h, w = img.shape[:2]
+        for i in range(50):
+            shift = int(math.sin(i / 50.0 * 2 * math.pi) * 2)
+            M = np.float32([[1, 0, 0], [0, 1, shift]])
+            shifted = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+            cv2.imwrite(str(frames_dir / f"{i:05d}.jpg"), shifted)
+
+    # 计算人脸嘴周候选框
+    frame_files = sorted(frames_dir.glob("*.jpg"))
+    if not frame_files:
+        raise RuntimeError(f"未能从自定义素材中解析出可用画面帧: {media_path}")
+
+    sample = cv2.imread(str(frame_files[0]))
+    h, w = sample.shape[:2]
+    # 默认人脸嘴唇位置：位于画面纵向 45%~75%，横向 35%~65%
+    ymin = int(h * 0.40)
+    xmin = int(w * 0.35)
+    ymax = int(h * 0.72)
+    xmax = int(w * 0.65)
+    boxes = np.array([[ymin, xmin, ymax, xmax] for _ in frame_files], dtype=np.int32)
+    np.save(str(face_boxes_file), boxes)
+
+    return str(out_dir)
+
+
 class LipsyncEngine:
     """Lipsync engine orchestrator combining Onnx Inference and FFmpeg encoding."""
 
