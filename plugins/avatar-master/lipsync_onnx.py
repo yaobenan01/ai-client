@@ -18,24 +18,26 @@ from pathlib import Path
 import numpy as np
 
 
-def build_elliptical_feather_mask(h: int, w: int) -> np.ndarray:
+def build_elliptical_feather_mask(h: int, w: int, cx: int | None = None, cy: int | None = None) -> np.ndarray:
     """构建下半脸椭圆高斯羽化软遮罩 [H, W, 1]，边缘平滑衰减为 0。"""
     try:
         import cv2
 
         mask = np.zeros((h, w), dtype=np.float32)
-        # 椭圆中心位于嘴部与下巴中位 (x=50%, y=64%)
-        center = (w // 2, int(h * 0.64))
-        axes = (int(w * 0.38), int(h * 0.30))
-        cv2.ellipse(mask, center, axes, 0, 0, 360, 1.0, -1)
-        mask = cv2.GaussianBlur(mask, (15, 15), 6.0)
+        center_x = cx if cx is not None else w // 2
+        center_y = cy if cy is not None else int(h * 0.73)
+        axes = (max(8, int(w * 0.30)), max(6, int(h * 0.20)))
+        cv2.ellipse(mask, (center_x, center_y), axes, 0, 0, 360, 1.0, -1)
+        ksize = max(15, (int(min(h, w) * 0.25) // 2) * 2 + 1)
+        sigma = max(3.0, ksize / 3.0)
+        mask = cv2.GaussianBlur(mask, (ksize, ksize), sigma)
         return np.expand_dims(mask, axis=-1)
-    except ImportError:
-        # 兜底纯 NumPy 简易高斯余弦权重
+    except Exception:
         y, x = np.ogrid[:h, :w]
-        cy, cx = h * 0.64, w * 0.5
-        ry, rx = h * 0.30, w * 0.38
-        dist = ((y - cy) / ry) ** 2 + ((x - cx) / rx) ** 2
+        center_y = cy if cy is not None else h * 0.73
+        center_x = cx if cx is not None else w * 0.5
+        ry, rx = max(6.0, h * 0.20), max(8.0, w * 0.30)
+        dist = ((y - center_y) / ry) ** 2 + ((x - center_x) / rx) ** 2
         mask = np.clip(1.0 - dist, 0.0, 1.0).astype(np.float32)
         return np.expand_dims(mask, axis=-1)
 
@@ -65,8 +67,13 @@ class OfflineLipsyncRenderer:
 
         print(f"  -> 加载 Wav2Lip ONNX 模型: {wav2lip_onnx} (执行后端: {providers[0]})", flush=True)
         self.w2l_sess = ort.InferenceSession(str(wav2lip_onnx), sess_options=sess_opts, providers=providers)
-        self.w2l_input_img_name = self.w2l_sess.get_inputs()[0].name
-        self.w2l_input_mel_name = self.w2l_sess.get_inputs()[1].name
+        self.w2l_input_img_name = None
+        self.w2l_input_mel_name = None
+        for inp in self.w2l_sess.get_inputs():
+            if "mel" in inp.name.lower() or (len(inp.shape) >= 3 and inp.shape[2] == 80):
+                self.w2l_input_mel_name = inp.name
+            else:
+                self.w2l_input_img_name = inp.name
         self.w2l_output_name = self.w2l_sess.get_outputs()[0].name
 
         self.gfp_sess = None
@@ -76,8 +83,6 @@ class OfflineLipsyncRenderer:
             self.gfp_input_name = self.gfp_sess.get_inputs()[0].name
             self.gfp_output_name = self.gfp_sess.get_outputs()[0].name
 
-        self.feather_mask_96 = build_elliptical_feather_mask(96, 96)
-
     def prepare_face_crop(
         self,
         frame: np.ndarray,
@@ -86,26 +91,24 @@ class OfflineLipsyncRenderer:
     ) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]]:
         """裁剪面部并准备 Wav2Lip 输入特征（下半脸遮罩拼接）。
 
-        box: [ymin, xmin, ymax, xmax]
+        box: [ymin, xmin, ymax, xmax] 或 [ymin, xmin, ymax, xmax, mcx, mcy]
         """
         import cv2
 
         h, w = frame.shape[:2]
-        ymin, xmin, ymax, xmax = [int(v) for v in box]
+        ymin, xmin, ymax, xmax = [int(v) for v in box[:4]]
         ymin, xmin = max(0, ymin), max(0, xmin)
         ymax, xmax = min(h, ymax), min(w, xmax)
 
         face = frame[ymin:ymax, xmin:xmax]
-        orig_face_size = (face.shape[1], face.shape[0])  # (w, h)
-
         face_resized = cv2.resize(face, (img_size, img_size))
         masked_face = face_resized.copy()
-        # 下半脸置零作为条件输入
+        # Wav2Lip 协议：下半脸置零作为被遮蔽条件输入
         masked_face[img_size // 2 :, :] = 0
 
-        # 归一化为 [-1, 1] 并拼接到 6 通道
-        f_norm = (face_resized.astype(np.float32) / 127.5) - 1.0
-        m_norm = (masked_face.astype(np.float32) / 127.5) - 1.0
+        # 标准 Wav2Lip 归一化 [0.0, 1.0] 并拼接到 6 通道
+        f_norm = face_resized.astype(np.float32) / 255.0
+        m_norm = masked_face.astype(np.float32) / 255.0
 
         # [H, W, 6] -> [1, 6, H, W]
         cat = np.concatenate([m_norm, f_norm], axis=-1)
@@ -193,9 +196,9 @@ class OfflineLipsyncRenderer:
 
                 for idx_in_batch, original_i in enumerate(infer_indices):
                     pred = preds[idx_in_batch]  # [3, 96, 96]
-                    # 转为 [96, 96, 3] 图像
+                    # 转为 [96, 96, 3] 图像 (Wav2Lip 输出经 Sigmoid 归一化在 [0, 1]，乘 255 还原真实画质)
                     pred = np.transpose(pred, (1, 2, 0))
-                    pred = ((pred + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
+                    pred = np.clip(pred * 255.0, 0, 255).astype(np.uint8)
 
                     # 可选：GFPGAN 局部超分
                     if self.gfp_sess:
@@ -208,12 +211,15 @@ class OfflineLipsyncRenderer:
                         except Exception:
                             pass
 
-                    # 帧间时域平滑 (EMA)，减少前后帧抖动
+                    # 帧间时域平滑 (EMA)，杜绝前后帧嘴唇高频微颤
                     if (original_i - 1) in prev_mouth_pred:
                         pred = (alpha_ema * pred + (1.0 - alpha_ema) * prev_mouth_pred[original_i - 1]).astype(np.uint8)
                     prev_mouth_pred[original_i] = pred
 
-                    synth_results[original_i] = (pred, infer_meta[idx_in_batch])
+                    box = face_boxes[get_base_idx(original_i)]
+                    mcx = int(box[4]) if len(box) >= 6 else None
+                    mcy = int(box[5]) if len(box) >= 6 else None
+                    synth_results[original_i] = (pred, infer_meta[idx_in_batch], (mcx, mcy))
 
             # 融合贴回并写入输出管道
             for i in batch_indices:
@@ -221,17 +227,19 @@ class OfflineLipsyncRenderer:
                 out_frame = base_frames[base_i].copy()
 
                 if i in synth_results:
-                    pred_patch, (_, orig_crop, (xmin, ymin, xmax, ymax)) = synth_results[i]
+                    pred_patch, (_, orig_crop, (xmin, ymin, xmax, ymax)), (mcx, mcy) = synth_results[i]
                     crop_w, crop_h = xmax - xmin, ymax - ymin
 
                     pred_resized = cv2.resize(pred_patch, (crop_w, crop_h))
-                    mask_resized = cv2.resize(self.feather_mask_96, (crop_w, crop_h))
-                    if mask_resized.ndim == 2:
-                        mask_resized = np.expand_dims(mask_resized, axis=-1)
+
+                    # 动态椭圆高斯羽化软遮罩（以真实嘴唇位置为中心，边缘自然渐变融入原生皮肤）
+                    mcx_rel = (mcx - xmin) if mcx is not None else (crop_w // 2)
+                    mcy_rel = (mcy - ymin) if mcy is not None else int(crop_h * 0.74)
+                    mask_feather = build_elliptical_feather_mask(crop_h, crop_w, cx=mcx_rel, cy=mcy_rel)
 
                     # 仅在羽化遮罩区域与原人脸进行软加权混合
                     orig_target = out_frame[ymin:ymax, xmin:xmax].astype(np.float32)
-                    blended = (pred_resized.astype(np.float32) * mask_resized + orig_target * (1.0 - mask_resized)).astype(np.uint8)
+                    blended = (pred_resized.astype(np.float32) * mask_feather + orig_target * (1.0 - mask_feather)).astype(np.uint8)
                     out_frame[ymin:ymax, xmin:xmax] = blended
 
                 # 将最终 BGR 图像帧写入 FFmpeg 管道
@@ -388,13 +396,60 @@ def ensure_preset_assets(preset_dir_path: str, avatar_id: str) -> str:
     return str(preset_dir)
 
 
+def find_yunet_model() -> Path | None:
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent / "sidecars" / "avatar" / "models" / "face_detection_yunet.onnx",
+        Path(__file__).resolve().parent / "models" / "face_detection_yunet.onnx",
+        Path("sidecars/avatar/models/face_detection_yunet.onnx").resolve(),
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+    return None
+
+
 def detect_face_and_mouth(image: np.ndarray) -> tuple[int, int, int, int, int, int]:
     """Accurately detects face bounding box and mouth center coordinates (cx, cy)."""
     import cv2
     h, w = image.shape[:2]
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # 1. Horizontal face center
+    # 1. 优先使用 OpenCV YuNet 深度神经网络检测器（亚像素级关键点定位）
+    yunet_model = find_yunet_model()
+    if yunet_model:
+        try:
+            detector = cv2.FaceDetectorYN.create(
+                model=str(yunet_model),
+                config="",
+                input_size=(w, h),
+                score_threshold=0.6,
+                nms_threshold=0.3,
+                top_k=5000,
+            )
+            detector.setInputSize((w, h))
+            _, faces = detector.detect(image)
+            if faces is not None and len(faces) > 0:
+                face = faces[0]
+                landmarks = face[4:14].reshape((5, 2)).astype(int)
+                r_eye, l_eye, nose, r_mouth, l_mouth = landmarks
+                eye_cx = (r_eye[0] + l_eye[0]) // 2
+                eye_cy = (r_eye[1] + l_eye[1]) // 2
+                mouth_cx = (r_mouth[0] + l_mouth[0]) // 2
+                mouth_cy = (r_mouth[1] + l_mouth[1]) // 2
+
+                eye_mouth_dist = max(20, mouth_cy - eye_cy)
+                box_h = int(eye_mouth_dist * 3.25)
+                box_w = int(box_h * 0.95)
+
+                y1 = max(0, eye_cy - int(eye_mouth_dist * 1.45))
+                y2 = min(h, y1 + box_h)
+                x1 = max(0, mouth_cx - box_w // 2)
+                x2 = min(w, x1 + box_w)
+                return y1, x1, y2, x2, mouth_cx, mouth_cy
+        except Exception:
+            pass
+
+    # 2. 兜底几何与色度检测
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     x1, x2 = int(w * 0.2), int(w * 0.8)
     sub_gray = gray[:, x1:x2]
     edges = cv2.Canny(sub_gray, 40, 120)
@@ -404,7 +459,6 @@ def detect_face_and_mouth(image: np.ndarray) -> tuple[int, int, int, int, int, i
     else:
         face_cx = w // 2
 
-    # 2. Vertical head bounds around face_cx
     strip = gray[:, max(0, face_cx - int(w * 0.12)):min(w, face_cx + int(w * 0.12))]
     strip_edges = cv2.Canny(strip, 40, 120)
     row_density = np.sum(strip_edges, axis=1)
@@ -419,30 +473,13 @@ def detect_face_and_mouth(image: np.ndarray) -> tuple[int, int, int, int, int, i
     head_h = max(60, chin - head_top)
     head_w = max(60, int(head_h * 0.75))
 
-    # 3. Locate mouth via lip chrominance peak (2*R - G - B)
-    sy1 = max(0, head_top + int(head_h * 0.70))
-    sy2 = min(h, head_top + int(head_h * 0.95))
-    sx1 = max(0, face_cx - int(head_w * 0.35))
-    sx2 = min(w, face_cx + int(head_w * 0.35))
+    mouth_cx = face_cx
+    mouth_cy = head_top + int(head_h * 0.75)
 
-    mouth_slice = image[sy1:sy2, sx1:sx2]
-    if mouth_slice.size > 0:
-        r = mouth_slice[:, :, 2].astype(float)
-        g = mouth_slice[:, :, 1].astype(float)
-        b = mouth_slice[:, :, 0].astype(float)
-        lipness = 2.0 * r - g - b
-        lipness_blur = cv2.GaussianBlur(lipness, (9, 9), 2.0)
-        ly, lx = np.unravel_index(np.argmax(lipness_blur), lipness_blur.shape)
-        mouth_cx = sx1 + lx
-        mouth_cy = sy1 + ly
-    else:
-        mouth_cx = face_cx
-        mouth_cy = head_top + int(head_h * 0.82)
-
-    ymin = max(0, mouth_cy - int(head_h * 0.35))
-    ymax = min(h, mouth_cy + int(head_h * 0.25))
-    xmin = max(0, mouth_cx - int(head_w * 0.5))
-    xmax = min(w, mouth_cx + int(head_w * 0.5))
+    ymin = max(0, head_top - int(head_h * 0.1))
+    ymax = min(h, chin + int(head_h * 0.1))
+    xmin = max(0, mouth_cx - int(head_w * 0.55))
+    xmax = min(w, mouth_cx + int(head_w * 0.55))
 
     return ymin, xmin, ymax, xmax, mouth_cx, mouth_cy
 
@@ -484,15 +521,25 @@ def prepare_custom_avatar_assets(media_path: str, output_dir_path: str) -> str:
             shifted = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
             cv2.imwrite(str(frames_dir / f"{i:05d}.jpg"), shifted)
 
-    # 计算人脸嘴周候选框与嘴唇精准坐标
+    # 计算人脸嘴周候选框与嘴唇精准坐标并进行时域平滑滤波
     frame_files = sorted(frames_dir.glob("*.jpg"))
     if not frame_files:
         raise RuntimeError(f"未能从自定义素材中解析出可用画面帧: {media_path}")
 
     sample = cv2.imread(str(frame_files[0]))
-    ymin, xmin, ymax, xmax, mcx, mcy = detect_face_and_mouth(sample)
-    boxes = np.array([[ymin, xmin, ymax, xmax, mcx, mcy] for _ in frame_files], dtype=np.int32)
-    np.save(str(face_boxes_file), boxes)
+    initial_box = np.array(detect_face_and_mouth(sample), dtype=np.float32)
+    boxes = []
+    prev_box = initial_box
+    for ff in frame_files:
+        f_img = cv2.imread(str(ff))
+        if f_img is not None:
+            cur_box = np.array(detect_face_and_mouth(f_img), dtype=np.float32)
+            smoothed = 0.85 * cur_box + 0.15 * prev_box
+            prev_box = smoothed
+            boxes.append(smoothed.astype(np.int32))
+        else:
+            boxes.append(prev_box.astype(np.int32))
+    np.save(str(face_boxes_file), np.array(boxes, dtype=np.int32))
 
     return str(out_dir)
 
@@ -506,6 +553,19 @@ class LipsyncEngine:
         self.enable_enhancer = enable_enhancer
         self.renderer = None
 
+        # Auto-detect default model if model_path is None or missing
+        if not model_path or not Path(model_path).is_file():
+            candidates = [
+                Path(__file__).resolve().parent.parent.parent / "sidecars" / "avatar" / "models" / "wav2lip.onnx",
+                Path(__file__).resolve().parent / "models" / "wav2lip.onnx",
+                Path("sidecars/avatar/models/wav2lip.onnx").resolve(),
+            ]
+            for c in candidates:
+                if c.is_file():
+                    model_path = str(c)
+                    self.model_path = model_path
+                    break
+
         if model_path and Path(model_path).is_file():
             try:
                 use_gpu = (device != "cpu")
@@ -513,6 +573,7 @@ class LipsyncEngine:
                     wav2lip_onnx=model_path,
                     use_gpu=use_gpu
                 )
+                print(f"[LipsyncEngine] Loaded neural Wav2Lip model: {model_path}", flush=True)
             except Exception as e:
                 print(f"[LipsyncEngine] Note: Could not load Wav2Lip ONNX model ({e}), using fluid acoustic procedural lipsync.", flush=True)
 
@@ -575,7 +636,7 @@ class LipsyncEngine:
             str(out_p)
         ]
 
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
         try:
             if self.renderer is not None:
@@ -606,7 +667,7 @@ class LipsyncEngine:
                     if len(box) >= 6:
                         mcx, mcy = int(box[4]), int(box[5])
                     else:
-                        mcx, mcy = xmin + crop_w // 2, ymin + int(crop_h * 0.65)
+                        mcx, mcy = xmin + crop_w // 2, ymin + int(crop_h * 0.74)
 
                     # Modulation based on energy (smooth EMA 0.65)
                     target_open = min(1.0, max(0.0, (rms - 0.007) / 0.038))
@@ -644,10 +705,13 @@ class LipsyncEngine:
 
         finally:
             if proc.stdin:
-                proc.stdin.close()
-            _, err = proc.communicate()
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            proc.wait()
             if proc.returncode != 0:
-                raise RuntimeError(f"FFmpeg lipsync video encoding failed: {err.decode('utf-8', errors='replace')[-400:]}")
+                raise RuntimeError(f"FFmpeg lipsync video encoding failed with code {proc.returncode}")
 
         print(f"[LipsyncEngine] Lipsync synthesis finished: {out_p}", flush=True)
         return str(out_p)
