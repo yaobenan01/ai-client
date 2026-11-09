@@ -282,6 +282,7 @@ impl Tool for AvatarVideoSynthesize {
                     "avatar_id": { "type": "string", "description": "数字人主播标识，可选: boyang (伯洋), wanqing (婉清), zhiming (志明), xinyue (馨月)" },
                     "mode": { "type": "string", "enum": ["standalone", "ppt_pip"], "description": "模式: standalone (全屏播报), ppt_pip (PPT画中画陪讲)" },
                     "pptx_path": { "type": "string", "description": "PPTX 文件路径（画中画模式使用）" },
+                    "custom_avatar_path": { "type": "string", "description": "自定义数字人头像图片路径（可选）" },
                     "voice": { "type": "string", "description": "TTS 音色" },
                     "rate": { "type": "string", "description": "语速偏置 (如 -4%, +0%, +10%)" },
                     "background": { "type": "string", "description": "演播厅背景 (如 studio_blue, tech_dark, minimal_white)" }
@@ -302,6 +303,7 @@ impl Tool for AvatarVideoSynthesize {
         let rate = args.get("rate").and_then(|v| v.as_str()).map(|s| s.to_string());
         let background = args.get("background").and_then(|v| v.as_str()).map(|s| s.to_string());
         let pptx_path = args.get("pptx_path").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let custom_avatar_path = args.get("custom_avatar_path").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         let output_dir = ctx.workspace_dir.join("exports");
         std::fs::create_dir_all(&output_dir).ok();
@@ -325,6 +327,7 @@ impl Tool for AvatarVideoSynthesize {
             pip_pos: Some("bottom_right".into()),
             pip_style: Some("circle".into()),
             pip_scale: Some(0.28),
+            custom_avatar_path,
             output_path: Some(out_path.to_string_lossy().to_string()),
         };
 
