@@ -18,6 +18,307 @@ from pathlib import Path
 import numpy as np
 
 
+def match_mouth_color_lab(orig_crop: np.ndarray, pred_crop: np.ndarray) -> np.ndarray:
+    """在 CIE LAB 感知均匀色彩空间校准预测区域色温与明度，消除紫边与色偏。"""
+    import cv2
+
+    orig_lab = cv2.cvtColor(orig_crop, cv2.COLOR_BGR2LAB).astype(np.float32)
+    pred_lab = cv2.cvtColor(pred_crop, cv2.COLOR_BGR2LAB).astype(np.float32)
+    h, _ = orig_crop.shape[:2]
+    ref_h = max(8, int(h * 0.45))
+    for ch in range(3):
+        mu_o = np.mean(orig_lab[:ref_h, :, ch])
+        std_o = np.std(orig_lab[:ref_h, :, ch]) + 1e-4
+        mu_p = np.mean(pred_lab[:ref_h, :, ch])
+        std_p = np.std(pred_lab[:ref_h, :, ch]) + 1e-4
+        gain = np.clip(std_o / std_p, 0.80, 1.25)
+        pred_lab[:, :, ch] = (pred_lab[:, :, ch] - mu_p) * gain + mu_o
+    b_min = float(np.percentile(orig_lab[:, :, 2], 2))
+    pred_lab[:, :, 2] = np.maximum(pred_lab[:, :, 2], b_min)
+    pred_lab = np.clip(pred_lab, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(pred_lab, cv2.COLOR_LAB2BGR)
+
+
+def select_calm_base_segment(
+    base_frames: list[np.ndarray],
+    face_boxes: np.ndarray,
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """从基础帧序列中自动筛选自然闭嘴/平静呼吸的连续片段，避免原视频旧口型干扰新台词合成。"""
+    n_frames = len(base_frames)
+    if n_frames <= 10 or len(face_boxes) != n_frames:
+        return base_frames, face_boxes
+
+    h, w = base_frames[0].shape[:2]
+    p15_rgs = []
+    p85_gs = []
+    p10_gs = []
+
+    for i, f in enumerate(base_frames):
+        box = face_boxes[i]
+        ymin, xmin, ymax, xmax = [int(v) for v in box[:4]]
+        crop_w = max(16, xmax - xmin)
+        crop_h = max(16, ymax - ymin)
+        mcx = int(box[4]) if len(box) >= 6 else (xmin + crop_w // 2)
+        mcy = int(box[5]) if len(box) >= 6 else (ymin + int(crop_h * 0.68))
+        mw = float(box[6]) if len(box) >= 8 and box[6] > 8 else float(crop_w * 0.38)
+        nm = float(box[7]) if len(box) >= 8 and box[7] > 6 else float(crop_h * 0.20)
+
+        r1 = max(0, int(mcy - 0.04 * nm))
+        r2 = min(h, max(r1 + 4, int(mcy + 0.26 * nm)))
+        c1 = max(0, int(mcx - 0.22 * mw))
+        c2 = min(w, max(c1 + 4, int(mcx + 0.22 * mw)))
+        patch = f[r1:r2, c1:c2]
+        if patch.size == 0:
+            p15_rgs.append(50.0)
+            p85_gs.append(100.0)
+            p10_gs.append(40.0)
+            continue
+        g = patch[:, :, 1].astype(np.float32)
+        r = patch[:, :, 2].astype(np.float32)
+        rg = r - g
+        p15_rgs.append(float(np.percentile(rg, 15)))
+        p85_gs.append(float(np.percentile(g, 85)))
+        p10_gs.append(float(np.percentile(g, 10)))
+
+    base_g = float(np.percentile(p85_gs, 15))
+    integrity = [
+        p15_rgs[i] - 0.5 * max(0.0, p85_gs[i] - base_g) - 1.2 * max(0.0, 16.0 - p10_gs[i])
+        for i in range(n_frames)
+    ]
+    top_int = float(np.percentile(integrity, 90))
+    closed_mask = [1 if val >= top_int - 14.0 else 0 for val in integrity]
+
+    best_s, best_l, cur_s, cur_l = 0, 0, 0, 0
+    for idx, m in enumerate(closed_mask):
+        if m == 1:
+            if cur_l == 0:
+                cur_s = idx
+            cur_l += 1
+            if cur_l > best_l:
+                best_s, best_l = cur_s, cur_l
+        else:
+            cur_l = 0
+
+    if best_l >= 8:
+        import cv2
+        lead_trim = min(6, best_l // 3) if best_s == 0 else (2 if best_l >= 14 else 1)
+        tail_trim = 2 if best_l >= 14 else (1 if best_l >= 10 else 0)
+        s_idx = best_s + lead_trim
+        e_idx = best_s + best_l - tail_trim
+        if e_idx - s_idx >= 6:
+            seg_frames = base_frames[s_idx:e_idx]
+            seg_boxes = face_boxes[s_idx:e_idx]
+            sharps = []
+            for sf, sb in zip(seg_frames, seg_boxes):
+                y1, x1, y2, x2 = [int(v) for v in sb[:4]]
+                top_patch = sf[max(0, y1):max(y1 + 8, int(y1 + (y2 - y1) * 0.45)), max(0, x1):max(x1 + 8, x2)]
+                sh = float(cv2.Laplacian(cv2.cvtColor(top_patch, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()) if top_patch.size > 0 else 100.0
+                sharps.append(sh)
+            med_sh = float(np.median(sharps))
+            valid = [k for k, sh in enumerate(sharps) if sh >= med_sh * 0.85]
+            if len(valid) >= 6:
+                v_s, v_e = valid[0], valid[-1] + 1
+                if v_e - v_s >= 6:
+                    return seg_frames[v_s:v_e], seg_boxes[v_s:v_e]
+            return seg_frames, seg_boxes
+
+    return base_frames, face_boxes
+
+
+def synthesize_high_fidelity_mouth(
+    orig_crop: np.ndarray,
+    face_96: np.ndarray,
+    pred_96: np.ndarray,
+    mcx: float,
+    mcy: float,
+    mouth_w: float,
+    nm_dist: float,
+    rms: float,
+    rms_p90: float,
+    prev_open_px: float,
+) -> tuple[np.ndarray, float]:
+    """结合 Wav2Lip 神经声学开合度预测与 C1 连续高分辨率原生物理唇部弹性形变合成。
+
+    保留 100% 原生 1080p 唇纹、唇峰、酒窝与下巴高频肌理，消除 96x96 上采样模糊与口角接缝。
+    """
+    import cv2
+
+    crop_h, crop_w = orig_crop.shape[:2]
+    mcx_96 = int(round(mcx * 96.0 / max(1, crop_w)))
+    mcy_96 = int(round(mcy * 96.0 / max(1, crop_h)))
+    mw_96 = max(12, int(round(mouth_w * 96.0 / max(1, crop_w))))
+    r_top = max(48, mcy_96 - 6)
+    r_bot = min(92, max(r_top + 4, mcy_96 + 11))
+    c_left = max(16, mcx_96 - int(0.25 * mw_96))
+    c_right = min(80, max(c_left + 4, mcx_96 + int(0.25 * mw_96)))
+
+    m_patch = pred_96[r_top:r_bot, c_left:c_right]
+    o_patch = face_96[r_top:r_bot, c_left:c_right]
+    gray_m = (
+        0.50 * m_patch[:, :, 2].astype(np.float32)
+        + 0.35 * m_patch[:, :, 1].astype(np.float32)
+        + 0.15 * m_patch[:, :, 0].astype(np.float32)
+    )
+    gray_o = (
+        0.50 * o_patch[:, :, 2].astype(np.float32)
+        + 0.35 * o_patch[:, :, 1].astype(np.float32)
+        + 0.15 * o_patch[:, :, 0].astype(np.float32)
+    )
+
+    p10 = float(np.percentile(gray_m, 10)) if gray_m.size > 0 else 80.0
+    p85 = float(np.percentile(gray_m, 85)) if gray_m.size > 0 else 120.0
+    orig_p15 = float(np.percentile(gray_o, 15)) if gray_o.size > 0 else 80.0
+    ref_dark = min(orig_p15, p85 * 0.76)
+    thresh = ref_dark * 0.88
+
+    dark_mask = gray_m < thresh
+    col_open = np.sum(dark_mask, axis=0) if dark_mask.size > 0 else np.zeros(1)
+    col_h = float(np.percentile(col_open, 75))
+    neural_col_open = float(np.clip((col_h - 0.5) / 4.5, 0.0, 1.0))
+    drop_open = float(np.clip((ref_dark - p10) / max(18.0, ref_dark * 0.55), 0.0, 1.0))
+    neural_open = 0.55 * neural_col_open + 0.45 * drop_open
+
+    rms_norm = float(np.clip((rms - 0.0025) / max(0.04, rms_p90), 0.0, 1.0))
+    if rms < 0.0025:
+        target_ratio = 0.0
+    else:
+        target_ratio = 0.68 * neural_open + 0.32 * rms_norm * (0.30 + 0.70 * neural_open)
+
+    max_open_px = 0.19 * mouth_w
+    raw_open_px = float(target_ratio * max_open_px)
+
+    # 非对称攻击/释放时域滤波：张嘴爆破音敏锐响应，闭嘴过渡自然阻尼
+    if raw_open_px >= prev_open_px:
+        open_px = 0.72 * raw_open_px + 0.28 * prev_open_px
+    else:
+        open_px = 0.56 * raw_open_px + 0.44 * prev_open_px
+
+    if rms < 0.0018 and open_px < 0.025 * mouth_w:
+        open_px = 0.0
+
+    if open_px <= 0.15:
+        return orig_crop.copy(), 0.0
+
+    # 抑制转置卷积口腔内紫边与色散，并进行 CIE LAB 肤色匹配
+    p = pred_96.astype(np.float32)
+    p[:, :, 0] = np.minimum(p[:, :, 0], p[:, :, 2] * 0.90)
+    dark = p[:, :, 2] < 85.0
+    p[:, :, 0] = np.where(dark, np.minimum(p[:, :, 0], p[:, :, 2] * 0.65), p[:, :, 0])
+    p[:, :, 1] = np.where(dark, np.minimum(p[:, :, 1], p[:, :, 2] * 0.72), p[:, :, 1])
+    pred_clean = np.clip(p, 0, 255).astype(np.uint8)
+    pred_crop = cv2.resize(pred_clean, (crop_w, crop_h), interpolation=cv2.INTER_LANCZOS4)
+    pred_crop = match_mouth_color_lab(orig_crop, pred_crop)
+
+    # 提取原图自然唇缝曲线 (Stomion Curve)，自适应微微笑容口角高度差
+    orig_gray = cv2.cvtColor(orig_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    s_top = max(0, int(round(mcy - 0.08 * nm_dist)))
+    s_bot = min(crop_h, max(s_top + 3, int(round(mcy + 0.30 * nm_dist)) + 1))
+    strip = orig_gray[s_top:s_bot, :]
+    stomion_y_raw = s_top + np.argmin(strip, axis=0).astype(np.float32)
+    stomion_y_raw = cv2.GaussianBlur(stomion_y_raw.reshape(1, -1), (25, 1), 6.0).flatten()
+
+    c_x1 = max(0, int(mcx - 0.15 * mouth_w))
+    c_x2 = min(crop_w, max(c_x1 + 2, int(mcx + 0.15 * mouth_w)))
+    center_stom_y = float(np.median(stomion_y_raw[c_x1:c_x2]))
+    stomion_y_raw = np.clip(stomion_y_raw, center_stom_y - 0.12 * nm_dist, center_stom_y + 0.12 * nm_dist)
+
+    x_coords = np.arange(crop_w, dtype=np.float32)
+    w_stom = np.exp(-0.5 * ((x_coords - mcx) / (0.36 * mouth_w)) ** 2).astype(np.float32)
+    stomion_curve = (w_stom * stomion_y_raw + (1.0 - w_stom) * center_stom_y).astype(np.float32)
+
+    # C1 连续圆弧 U 型水平张合包络：口角处函数值与一阶导数严格归零，彻底消除口角横线
+    t_abs = np.clip(np.abs(x_coords - mcx) / (0.45 * mouth_w), 0.0, 1.0).astype(np.float32)
+    u = (t_abs ** 1.65).astype(np.float32)
+    arch_x = ((1.0 - u) ** 2 * (1.0 + 2.0 * u)).astype(np.float32)
+
+    delta_up_x = (0.26 * open_px * arch_x).astype(np.float32)
+    delta_dn_x = (0.74 * open_px * arch_x).astype(np.float32)
+
+    grid_x, grid_y = np.meshgrid(x_coords, np.arange(crop_h, dtype=np.float32))
+    map_x = grid_x.astype(np.float32)
+    map_y = grid_y.astype(np.float32)
+
+    y_anchor_top = stomion_curve - 0.75 * nm_dist
+    y_part_top = stomion_curve - delta_up_x
+    y_part_bot = stomion_curve + delta_dn_x
+    y_anchor_bot = stomion_curve + 1.35 * nm_dist
+
+    mask_up = (grid_y >= y_anchor_top[None, :]) & (grid_y <= y_part_top[None, :])
+    denom_up = np.maximum(1.0, y_part_top - y_anchor_top)[None, :]
+    frac_up = (grid_y - y_anchor_top[None, :]) / denom_up
+    src_y_up = y_anchor_top[None, :] + frac_up * (stomion_curve - y_anchor_top)[None, :]
+    map_y = np.where(mask_up, src_y_up, map_y).astype(np.float32)
+
+    mask_dn = (grid_y >= y_part_bot[None, :]) & (grid_y <= y_anchor_bot[None, :])
+    denom_dn = np.maximum(1.0, y_anchor_bot - y_part_bot)[None, :]
+    frac_dn = (grid_y - y_part_bot[None, :]) / denom_dn
+    src_y_dn = stomion_curve[None, :] + frac_dn * (y_anchor_bot - stomion_curve)[None, :]
+    map_y = np.where(mask_dn, src_y_dn, map_y).astype(np.float32)
+
+    mask_in = (grid_y > y_part_top[None, :]) & (grid_y < y_part_bot[None, :])
+    ys_grid = np.broadcast_to(stomion_curve[None, :], (crop_h, crop_w)).astype(np.float32)
+    map_y = np.where(mask_in, ys_grid, map_y).astype(np.float32)
+
+    warped_orig = cv2.remap(
+        orig_crop,
+        map_x,
+        map_y,
+        interpolation=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REFLECT_101,
+    )
+
+    if open_px > 0.45:
+        gap_h = np.maximum(1.0, y_part_bot - y_part_top)[None, :]
+        rel_y = np.clip((grid_y - y_part_top[None, :]) / gap_h, 0.0, 1.0)
+        stom_rows = np.clip(stomion_curve.astype(int), 0, crop_h - 1)
+        stom_cols = orig_crop[stom_rows, np.arange(crop_w)].astype(np.float32)
+        base_dark = np.percentile(stom_cols, 15, axis=0) * 0.36
+        cavity = np.zeros_like(orig_crop, dtype=np.float32)
+        for c in range(3):
+            cavity[:, :, c] = base_dark[c] * (0.85 + 0.30 * np.sin(rel_y * np.pi))
+
+        # 自然上排门牙微露（随张口度自适应平滑显现，色温匹配人物面部高光）
+        teeth_vis = np.clip((open_px - 0.05 * mouth_w) / (0.10 * mouth_w), 0.0, 0.55)
+        teeth_arch = arch_x[None, :] ** 1.3
+        teeth_band = np.exp(-0.5 * ((rel_y - 0.20) / 0.12) ** 2) * teeth_arch
+        face_p90 = float(np.percentile(orig_gray[: max(4, int(crop_h * 0.45)), :], 88))
+        teeth_col = np.array(
+            [face_p90 * 0.92, face_p90 * 0.96, min(235.0, face_p90 * 1.02)],
+            dtype=np.float32,
+        )
+        for c in range(3):
+            cavity[:, :, c] = (
+                cavity[:, :, c] * (1.0 - teeth_vis * teeth_band)
+                + teeth_col[c] * (teeth_vis * teeth_band)
+            )
+
+        inner_tex = 0.65 * cavity + 0.35 * pred_crop.astype(np.float32)
+
+        in_y_dist = np.minimum(grid_y - y_part_top[None, :], y_part_bot[None, :] - grid_y)
+        feather_px = max(1.0, min(2.8, 0.22 * open_px))
+        inner_mask = np.clip(in_y_dist / feather_px, 0.0, 1.0) * (arch_x[None, :] ** 0.6)
+        inner_mask = cv2.GaussianBlur(inner_mask.astype(np.float32), (5, 5), 0.9)[..., None]
+
+        # 拉普拉斯高频唇纹保留 + 低频神经光影融合
+        low_warped = cv2.GaussianBlur(warped_orig.astype(np.float32), (0, 0), 3.0)
+        high_warped = warped_orig.astype(np.float32) - low_warped
+        low_pred = cv2.GaussianBlur(pred_crop.astype(np.float32), (0, 0), 3.0)
+        lip_zone_y = np.exp(-0.5 * ((grid_y - stomion_curve[None, :]) / (0.38 * nm_dist)) ** 2)
+        lip_zone = (lip_zone_y * (arch_x[None, :] ** 0.7))[..., None] * 0.18
+        shaded_warped = np.clip(
+            (1.0 - lip_zone) * low_warped + lip_zone * low_pred + high_warped,
+            0.0,
+            255.0,
+        )
+
+        comp = inner_tex * inner_mask + shaded_warped * (1.0 - inner_mask)
+        comp = np.clip(comp, 0, 255).astype(np.uint8)
+    else:
+        comp = warped_orig
+
+    return comp, open_px
+
+
 def build_elliptical_feather_mask(h: int, w: int, cx: int | None = None, cy: int | None = None) -> np.ndarray:
     """构建 HeyGem 级别下半脸解剖级高斯羽化软遮罩 [H, W, 1]，覆盖嘴唇完整开合与口角动态区。"""
     try:
@@ -146,7 +447,9 @@ class OfflineLipsyncRenderer:
         import cv2
 
         n_total = len(mel_chunks)
+        base_frames, face_boxes = select_calm_base_segment(base_frames, face_boxes)
         n_base = len(base_frames)
+        rms_p90 = float(np.percentile(rms_energies, 90)) if len(rms_energies) > 0 else 0.15
 
         # 乒乓往复循环索引，消除视频跳帧感
         def get_base_idx(idx: int) -> int:
@@ -157,6 +460,7 @@ class OfflineLipsyncRenderer:
             return pos if pos < n_base else cycle - pos
 
         prev_mouth_pred: dict[int, np.ndarray] = {}
+        prev_open_px: float = 0.0
 
         # 批处理循环 (HeyGem 纯流式批量全帧推理，保障每一帧自然口型流转)
         for batch_start in range(0, n_total, batch_size):
@@ -203,13 +507,6 @@ class OfflineLipsyncRenderer:
                     pred = np.transpose(pred, (1, 2, 0))
                     pred = np.clip(pred * 255.0, 0, 255).astype(np.uint8)
 
-                    # 唇齿高频微观结构自适应锐化增强：消除 96x96 上采样后的发糊和塑料感
-                    try:
-                        blur_mouth = cv2.GaussianBlur(pred, (0, 0), 1.5)
-                        pred = cv2.addWeighted(pred, 1.25, blur_mouth, -0.25, 0)
-                    except Exception:
-                        pass
-
                     # 可选：GFPGAN 局部超分
                     if self.gfp_sess:
                         try:
@@ -221,15 +518,13 @@ class OfflineLipsyncRenderer:
                         except Exception:
                             pass
 
-                    # 帧间时域平滑 (EMA: 0.94 保持唇形咬字开合利落，同时消除高频像素噪点)
+                    # 帧间时域平滑 (EMA: 0.90 保持唇形咬字开合利落，同时消除高频像素噪点)
                     if (original_i - 1) in prev_mouth_pred:
-                        pred = (alpha_ema * pred + (1.0 - alpha_ema) * prev_mouth_pred[original_i - 1]).astype(np.uint8)
+                        pred = (0.90 * pred + 0.10 * prev_mouth_pred[original_i - 1]).astype(np.uint8)
                     prev_mouth_pred[original_i] = pred
 
                     box = face_boxes[get_base_idx(original_i)]
-                    mcx = int(box[4]) if len(box) >= 6 else None
-                    mcy = int(box[5]) if len(box) >= 6 else None
-                    synth_results[original_i] = (pred, infer_meta[idx_in_batch], (mcx, mcy))
+                    synth_results[original_i] = (pred, infer_meta[idx_in_batch], box)
 
             # 融合贴回并写入输出管道
             for i in batch_indices:
@@ -237,35 +532,29 @@ class OfflineLipsyncRenderer:
                 out_frame = base_frames[base_i].copy()
 
                 if i in synth_results:
-                    pred_patch, (_, orig_crop, (xmin, ymin, xmax, ymax)), (mcx, mcy) = synth_results[i]
+                    pred_patch, (_, orig_crop, (xmin, ymin, xmax, ymax)), box = synth_results[i]
                     crop_w, crop_h = xmax - xmin, ymax - ymin
+                    if crop_w > 12 and crop_h > 12:
+                        mcx_rel = float(box[4] - xmin) if len(box) >= 6 else float(crop_w * 0.5)
+                        mcy_rel = float(box[5] - ymin) if len(box) >= 6 else float(crop_h * 0.68)
+                        mouth_w = float(box[6]) if len(box) >= 8 and box[6] > 8 else float(crop_w * 0.38)
+                        nm_dist = float(box[7]) if len(box) >= 8 and box[7] > 6 else float(crop_h * 0.20)
+                        face_96 = cv2.resize(orig_crop, (96, 96), interpolation=cv2.INTER_AREA)
+                        rms_val = float(rms_energies[i]) if i < len(rms_energies) else 0.0
 
-                    # 使用 Lanczos-4 算法保真上采样，极大增强唇红边界和牙齿边缘
-                    pred_resized = cv2.resize(pred_patch, (crop_w, crop_h), interpolation=cv2.INTER_LANCZOS4)
-
-                    # HeyGem 级原生肤色/光影自适应直方图匹配 (Color Matching)
-                    # 利用原面部上半区 (y < 45%) 的重合皮肤统计特征，动态校准预测嘴周色彩与亮度增益
-                    half_ref_h = max(4, int(crop_h * 0.45))
-                    orig_top = orig_crop[:half_ref_h, :].astype(np.float32)
-                    pred_top = pred_resized[:half_ref_h, :].astype(np.float32)
-                    mu_orig = np.mean(orig_top, axis=(0, 1), keepdims=True)
-                    std_orig = np.std(orig_top, axis=(0, 1), keepdims=True)
-                    mu_pred = np.mean(pred_top, axis=(0, 1), keepdims=True)
-                    std_pred = np.std(pred_top, axis=(0, 1), keepdims=True)
-
-                    gain = np.clip((std_orig + 1e-4) / (std_pred + 1e-4), 0.85, 1.20)
-                    bias = np.clip(mu_orig - gain * mu_pred, -20.0, 20.0)
-                    pred_color = np.clip(pred_resized.astype(np.float32) * gain + bias, 0.0, 255.0).astype(np.uint8)
-
-                    # HeyGem 级别下半脸解剖级高斯羽化软遮罩
-                    mcx_rel = (mcx - xmin) if mcx is not None else (crop_w // 2)
-                    mcy_rel = (mcy - ymin) if mcy is not None else int(crop_h * 0.72)
-                    mask_feather = build_elliptical_feather_mask(crop_h, crop_w, cx=mcx_rel, cy=mcy_rel)
-
-                    # 仅在羽化遮罩区域与原人脸进行软加权混合
-                    orig_target = out_frame[ymin:ymax, xmin:xmax].astype(np.float32)
-                    blended = (pred_color.astype(np.float32) * mask_feather + orig_target * (1.0 - mask_feather)).astype(np.uint8)
-                    out_frame[ymin:ymax, xmin:xmax] = blended
+                        comp_crop, prev_open_px = synthesize_high_fidelity_mouth(
+                            orig_crop=orig_crop,
+                            face_96=face_96,
+                            pred_96=pred_patch,
+                            mcx=mcx_rel,
+                            mcy=mcy_rel,
+                            mouth_w=mouth_w,
+                            nm_dist=nm_dist,
+                            rms=rms_val,
+                            rms_p90=rms_p90,
+                            prev_open_px=prev_open_px,
+                        )
+                        out_frame[ymin:ymax, xmin:xmax] = comp_crop
 
                 # 将最终 BGR 图像帧写入 FFmpeg 管道
                 out_pipe.write(out_frame.tobytes())
@@ -417,16 +706,15 @@ def ensure_preset_assets(preset_dir_path: str, avatar_id: str) -> str:
 
     # Face box generation
     if not face_boxes_file.exists():
-        # Face box coordinates: [ymin, xmin, ymax, xmax] around the mouth and lower face
-        # For 1280x720 template: ymin=250, xmin=550, ymax=390, xmax=730
+        # Face box coordinates: [ymin, xmin, ymax, xmax, mcx, mcy, mouth_w, nm_dist]
         boxes = []
         n_frames = len(list(frames_dir.glob("*.jpg")))
         for i in range(max(1, n_frames)):
             breath = int(math.sin(i / 50.0 * 2 * math.pi) * 3)
-            boxes.append([245 + breath, 545, 385 + breath, 735])
+            boxes.append([215 + breath, 565, 385 + breath, 715, 640, 320 + breath, 50, 30])
         np.save(str(face_boxes_file), np.array(boxes, dtype=np.int32))
 
-    return str(preset_dir)
+    return str(target_dir)
 
 
 def find_yunet_model() -> Path | None:
@@ -441,43 +729,58 @@ def find_yunet_model() -> Path | None:
     return None
 
 
-def detect_face_and_mouth(image: np.ndarray) -> tuple[int, int, int, int, int, int]:
-    """Accurately detects face bounding box and mouth center coordinates (cx, cy)."""
+_YUNET_DETECTOR_CACHE: dict[tuple[int, int], object] = {}
+
+
+def detect_face_and_mouth(image: np.ndarray) -> tuple[int, int, int, int, int, int, int, int]:
+    """Accurately detects nose-centered face crop box and mouth geometry [y1, x1, y2, x2, mcx, mcy, mouth_w, nm_dist]."""
     import cv2
     h, w = image.shape[:2]
 
-    # 1. 优先使用 OpenCV YuNet 深度神经网络检测器（亚像素级关键点定位）
+    # 1. 优先使用 OpenCV YuNet 深度神经网络检测器（亚像素级关键点定位 + 实例缓存提速）
     yunet_model = find_yunet_model()
     if yunet_model:
         try:
-            detector = cv2.FaceDetectorYN.create(
-                model=str(yunet_model),
-                config="",
-                input_size=(w, h),
-                score_threshold=0.6,
-                nms_threshold=0.3,
-                top_k=5000,
-            )
-            detector.setInputSize((w, h))
+            key = (w, h)
+            detector = _YUNET_DETECTOR_CACHE.get(key)
+            if detector is None:
+                detector = cv2.FaceDetectorYN.create(
+                    model=str(yunet_model),
+                    config="",
+                    input_size=(w, h),
+                    score_threshold=0.5,
+                    nms_threshold=0.3,
+                    top_k=5000,
+                )
+                _YUNET_DETECTOR_CACHE[key] = detector
+            else:
+                detector.setInputSize((w, h))
             _, faces = detector.detect(image)
             if faces is not None and len(faces) > 0:
                 face = faces[0]
-                landmarks = face[4:14].reshape((5, 2)).astype(int)
+                landmarks = face[4:14].reshape((5, 2))
                 r_eye, l_eye, nose, r_mouth, l_mouth = landmarks
-                eye_cx = (r_eye[0] + l_eye[0]) // 2
-                eye_cy = (r_eye[1] + l_eye[1]) // 2
-                mouth_cx = (r_mouth[0] + l_mouth[0]) // 2
-                mouth_cy = (r_mouth[1] + l_mouth[1]) // 2
+                eye_cy = 0.5 * float(r_eye[1] + l_eye[1])
+                mouth_cx = 0.5 * float(r_mouth[0] + l_mouth[0])
+                mouth_cy = 0.5 * float(r_mouth[1] + l_mouth[1])
+                mouth_w = max(16.0, float(np.linalg.norm(l_mouth - r_mouth)))
+                em_dist = max(24.0, mouth_cy - eye_cy)
+                nm_dist = max(12.0, mouth_cy - float(nose[1]))
 
-                eye_mouth_dist = max(20, mouth_cy - eye_cy)
-                box_h = int(eye_mouth_dist * 3.25)
-                box_w = int(box_h * 0.95)
-
-                y1 = max(0, eye_cy - int(eye_mouth_dist * 1.45))
-                y2 = min(h, y1 + box_h)
-                x1 = max(0, mouth_cx - box_w // 2)
-                x2 = min(w, x1 + box_w)
-                return y1, x1, y2, x2, mouth_cx, mouth_cy
+                y1 = max(0, int(round(float(nose[1]) - em_dist * 1.05)))
+                y2 = min(h, int(round(float(nose[1]) + em_dist * 1.15)))
+                x1 = max(0, int(round(mouth_cx - em_dist * 1.00)))
+                x2 = min(w, int(round(mouth_cx + em_dist * 1.00)))
+                return (
+                    y1,
+                    x1,
+                    y2,
+                    x2,
+                    int(round(mouth_cx)),
+                    int(round(mouth_cy)),
+                    int(round(mouth_w)),
+                    int(round(nm_dist)),
+                )
         except Exception:
             pass
 
@@ -508,13 +811,15 @@ def detect_face_and_mouth(image: np.ndarray) -> tuple[int, int, int, int, int, i
 
     mouth_cx = face_cx
     mouth_cy = head_top + int(head_h * 0.75)
+    mouth_w = max(20, int(head_w * 0.38))
+    nm_dist = max(14, int(head_h * 0.18))
 
     ymin = max(0, head_top - int(head_h * 0.1))
     ymax = min(h, chin + int(head_h * 0.1))
     xmin = max(0, mouth_cx - int(head_w * 0.55))
     xmax = min(w, mouth_cx + int(head_w * 0.55))
 
-    return ymin, xmin, ymax, xmax, mouth_cx, mouth_cy
+    return ymin, xmin, ymax, xmax, mouth_cx, mouth_cy, mouth_w, nm_dist
 
 
 def prepare_custom_avatar_assets(media_path: str, output_dir_path: str) -> str:
@@ -563,15 +868,14 @@ def prepare_custom_avatar_assets(media_path: str, output_dir_path: str) -> str:
     initial_box = np.array(detect_face_and_mouth(sample), dtype=np.float32)
     boxes = []
     prev_box = initial_box
-    for ff in frame_files:
-        f_img = cv2.imread(str(ff))
-        if f_img is not None:
-            cur_box = np.array(detect_face_and_mouth(f_img), dtype=np.float32)
-            smoothed = 0.85 * cur_box + 0.15 * prev_box
-            prev_box = smoothed
-            boxes.append(smoothed.astype(np.int32))
-        else:
-            boxes.append(prev_box.astype(np.int32))
+    for idx_f, ff in enumerate(frame_files):
+        if idx_f % 2 == 0:
+            f_img = cv2.imread(str(ff))
+            if f_img is not None:
+                cur_box = np.array(detect_face_and_mouth(f_img), dtype=np.float32)
+                smoothed = 0.82 * cur_box + 0.18 * prev_box
+                prev_box = smoothed
+        boxes.append(prev_box.astype(np.int32))
     np.save(str(face_boxes_file), np.array(boxes, dtype=np.int32))
 
     return str(out_dir)
@@ -635,9 +939,24 @@ class LipsyncEngine:
         base_frames = [cv2.imread(str(f)) for f in frame_files]
         face_boxes = np.load(str(face_boxes_file)) if face_boxes_file.is_file() else None
 
-        if face_boxes is None or len(face_boxes) == 0:
-            h, w = base_frames[0].shape[:2]
-            face_boxes = np.array([[int(h * 0.35), int(w * 0.4), int(h * 0.6), int(w * 0.6)] for _ in base_frames])
+        if (
+            face_boxes is None
+            or len(face_boxes) != len(base_frames)
+            or face_boxes.ndim < 2
+            or face_boxes.shape[1] < 8
+        ):
+            prev_box = np.array(detect_face_and_mouth(base_frames[0]), dtype=np.float32)
+            upgraded_boxes = []
+            for idx_f, bf in enumerate(base_frames):
+                if idx_f % 2 == 0:
+                    cur_b = np.array(detect_face_and_mouth(bf), dtype=np.float32)
+                    prev_box = 0.82 * cur_b + 0.18 * prev_box
+                upgraded_boxes.append(prev_box.astype(np.int32))
+            face_boxes = np.array(upgraded_boxes, dtype=np.int32)
+            try:
+                np.save(str(face_boxes_file), face_boxes)
+            except Exception:
+                pass
 
         # Extract Mel chunks and audio energy
         mel_chunks, rms_energies, dur_sec = extract_mel_chunks(audio_path, fps=fps)
