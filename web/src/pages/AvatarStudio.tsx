@@ -202,6 +202,12 @@ export default function AvatarStudio() {
     // Web 浏览器模式下：将素材传输至服务端工作区
     setCustomUploading(true)
     try {
+      // 预先探测核心服务在线状态（处理桌面冷启动排队）
+      const ready = await waitForCore(3000)
+      if (!ready) {
+        throw new Error('核心引擎 (127.0.0.1:8787) 正在初始化启动中，请稍候片刻后重试')
+      }
+
       const reader = new FileReader()
       reader.onload = async () => {
         try {
@@ -214,10 +220,11 @@ export default function AvatarStudio() {
             })
             if (upRes && upRes.path) {
               setCustomAvatarPath(upRes.path)
+              setStatusMsg(`✓ 自定义主播素材已成功就绪：${upRes.filename}`)
             }
           } catch (firstErr: any) {
             // 若后台核心服务刚完成初始化，等待就绪并自动自愈重试
-            const isReady = await waitForCore(3000)
+            const isReady = await waitForCore(4000)
             if (isReady) {
               const retryRes = await api.uploadWorkspaceFile({
                 filename: file.name,
@@ -225,6 +232,7 @@ export default function AvatarStudio() {
               })
               if (retryRes && retryRes.path) {
                 setCustomAvatarPath(retryRes.path)
+                setStatusMsg(`✓ 自定义主播素材已成功就绪：${retryRes.filename}`)
                 return
               }
             }

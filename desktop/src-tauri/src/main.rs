@@ -101,6 +101,18 @@ fn scan_for(root: &Path, name: &str, depth: usize, budget: &mut usize) -> Option
 
 /// 定位内置的 ppt-master（run.py 所在目录）。
 fn discover_ppt_master(app: &tauri::App) -> Option<PathBuf> {
+    // 优先检查用户数据目录（热更新/免管理员提权修补）
+    if let Ok(app_data) = app.path().app_data_dir() {
+        for sub in [
+            app_data.join("ai-client").join("plugins").join("ppt-master"),
+            app_data.join("plugins").join("ppt-master"),
+        ] {
+            if sub.join("run.py").is_file() {
+                return Some(sub);
+            }
+        }
+    }
+
     let bases = resource_bases(app);
     let mut candidates: Vec<PathBuf> = Vec::new();
     for base in &bases {
@@ -135,6 +147,18 @@ fn discover_ppt_master(app: &tauri::App) -> Option<PathBuf> {
 
 /// 定位内置的 avatar-master（run_avatar.py 所在目录）。
 fn discover_avatar_master(app: &tauri::App) -> Option<PathBuf> {
+    // 优先检查用户数据目录（热更新/免管理员提权修补）
+    if let Ok(app_data) = app.path().app_data_dir() {
+        for sub in [
+            app_data.join("ai-client").join("plugins").join("avatar-master"),
+            app_data.join("plugins").join("avatar-master"),
+        ] {
+            if sub.join("run_avatar.py").is_file() {
+                return Some(sub);
+            }
+        }
+    }
+
     let bases = resource_bases(app);
     let mut candidates: Vec<PathBuf> = Vec::new();
     for base in &bases {

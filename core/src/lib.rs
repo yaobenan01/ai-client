@@ -92,12 +92,12 @@ fn detect_llama_server_bin(config: &AppConfig) -> PathBuf {
 fn detect_ppt_master_dir(config: &AppConfig) -> PathBuf {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    // 1) 显式环境变量（桌面壳会把安装包内的目录通过它传进来）
+    // 1) 用户数据目录（升级或热修补的插件优先，支持免管理员权限热更新）
+    candidates.push(config.plugins_dir.join("ppt-master"));
+    // 2) 显式环境变量（桌面壳会把安装包内的目录通过它传进来）
     if let Some(p) = std::env::var_os("AI_CLIENT_PPT_MASTER_DIR") {
         candidates.push(PathBuf::from(p));
     }
-    // 2) 用户数据目录（升级或手动安装的插件）
-    candidates.push(config.plugins_dir.join("ppt-master"));
 
     // 3) 随安装包分发的内置资源
     if let Ok(cur) = std::env::current_exe() {
@@ -139,10 +139,12 @@ fn detect_ppt_master_dir(config: &AppConfig) -> PathBuf {
 fn detect_avatar_master_dir(config: &AppConfig) -> PathBuf {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
+    // 1) 用户数据目录（升级或热修补的插件优先，支持免管理员权限热更新）
+    candidates.push(config.plugins_dir.join("avatar-master"));
+    // 2) 显式环境变量（桌面壳传进来的内置资源路径）
     if let Some(p) = std::env::var_os("AI_CLIENT_AVATAR_MASTER_DIR") {
         candidates.push(PathBuf::from(p));
     }
-    candidates.push(config.plugins_dir.join("avatar-master"));
 
     if let Ok(cur) = std::env::current_exe() {
         if let Some(dir) = cur.parent() {

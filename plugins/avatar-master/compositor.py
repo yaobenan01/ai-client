@@ -187,12 +187,23 @@ def composite_standalone(
     # Subtitle burn-in
     if srt_path and os.path.isfile(srt_path):
         escaped_srt = escape_ffmpeg_path(srt_path)
-        # Professional modern subtitle styling: clean white text, subtle semi-opaque black box / shadow
+        # 专业现代广播级字幕排版：字号比例自适应，彻底消除巨型黑框与文字过大问题
+        is_portrait = (h > w)
+        if is_portrait:
+            # 竖屏视频 (例如 1080x1920 或 720x1280)
+            font_size = 42 if h >= 1800 else (30 if h >= 1200 else 22)
+            margin_v = 150 if h >= 1800 else (100 if h >= 1200 else 50)
+        else:
+            # 横屏视频 (例如 1920x1080 或 1280x720)
+            font_size = 28 if h >= 1000 else (20 if h >= 700 else 16)
+            margin_v = 55 if h >= 1000 else 35
+
         sub_style = (
-            "force_style="
-            "'FontName=Microsoft YaHei,FontSize=22,PrimaryColour=&H00FFFFFF,"
-            "OutlineColour=&H00111111,BackColour=&H60000000,BorderStyle=4,"
-            "Outline=1,Shadow=1,MarginV=42,Alignment=2'"
+            f"force_style="
+            f"'PlayResX={w},PlayResY={h},"
+            f"FontName=Microsoft YaHei,FontSize={font_size},"
+            f"PrimaryColour=&H00FFFFFF,OutlineColour=&H99111111,BorderStyle=1,"
+            f"Outline=2.0,Shadow=1.0,MarginV={margin_v},Alignment=2'"
         )
         filter_parts.append(f"{last_v}subtitles='{escaped_srt}':{sub_style}[vsub]")
         last_v = "[vsub]"
