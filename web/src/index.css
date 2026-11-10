@@ -93,10 +93,9 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,.14); background: #fff; }
 select.input {
-  height: 42px;
   min-height: 42px;
-  padding: 0 34px 0 12px;
-  line-height: 40px;
+  padding: 10px 36px 10px 12px;
+  line-height: 1.4;
   font-size: 13.5px;
   font-family: inherit;
   box-sizing: border-box;
@@ -123,12 +122,14 @@ select.input optgroup {
   padding: 6px 10px;
   color: var(--text);
   background: #fff;
+  line-height: 1.5;
 }
 select.input option {
   font-weight: normal;
   padding: 8px 12px;
   color: var(--text);
   background: #fff;
+  line-height: 1.5;
 }
 textarea.input { resize: vertical; min-height: 90px; line-height: 1.6; }
 .btn {

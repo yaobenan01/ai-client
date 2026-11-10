@@ -75,6 +75,28 @@ def composite_standalone(
 
     w, h = resolution
 
+    # Probe native dimensions of avatar video to intelligently preserve aspect ratio (prevent 9:16 portrait stretching to 16:9)
+    av_w, av_h = None, None
+    try:
+        import cv2
+        cap = cv2.VideoCapture(avatar_video_path)
+        if cap.isOpened():
+            av_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            av_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+    except Exception:
+        pass
+
+    if av_w and av_h and av_w > 0 and av_h > 0:
+        if av_h > av_w:
+            # 竖屏视频底模：自适应调整画布为竖屏 9:16 (例如 1080x1920 或原生)
+            if w > h:
+                w, h = (1080, 1920) if (av_h >= 1200 or av_w >= 720) else (av_w, av_h)
+        else:
+            # 横屏视频底模：保持 16:9 (例如 1920x1080)
+            if h > w:
+                w, h = 1920, 1080
+
     # Preset backgrounds dictionary
     preset_colors = {
         "studio_blue": "0x111e38",
@@ -99,6 +121,10 @@ def composite_standalone(
             bg_color = "0x" + bg_preset_or_path.lstrip("#")
         elif bg_preset_or_path.startswith("0x"):
             bg_color = bg_preset_or_path
+
+    # 当非纯绿幕抠像模式且用户未指定自定义背景文件时，直接复用人物原生实景画幅，避免强加背景色块导致画面违和
+    if not chroma_key and not use_bg_file:
+        bg_color = None
 
     if use_bg_file:
         # Input 0: Background video/image
@@ -144,7 +170,9 @@ def composite_standalone(
             )
             filter_parts.append("[0:v][fg]overlay=(W-w)/2:(H-h)[comp]")
         else:
-            filter_parts.append(f"[1:v]scale={w}:{h}[fg]")
+            filter_parts.append(
+                f"[1:v]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2[fg]"
+            )
             filter_parts.append("[0:v][fg]overlay=0:0[comp]")
 
         last_v = "[comp]"

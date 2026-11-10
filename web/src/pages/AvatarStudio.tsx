@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../lib/api'
+import { api, waitForCore } from '../lib/api'
 import ArtifactCard from '../components/ArtifactCard'
 
 interface AvatarPreset {
@@ -207,12 +207,28 @@ export default function AvatarStudio() {
         try {
           const result = reader.result as string
           const base64 = result.includes(',') ? result.split(',')[1] : result
-          const upRes = await api.uploadWorkspaceFile({
-            filename: file.name,
-            data_base64: base64
-          })
-          if (upRes && upRes.path) {
-            setCustomAvatarPath(upRes.path)
+          try {
+            const upRes = await api.uploadWorkspaceFile({
+              filename: file.name,
+              data_base64: base64
+            })
+            if (upRes && upRes.path) {
+              setCustomAvatarPath(upRes.path)
+            }
+          } catch (firstErr: any) {
+            // 若后台核心服务刚完成初始化，等待就绪并自动自愈重试
+            const isReady = await waitForCore(3000)
+            if (isReady) {
+              const retryRes = await api.uploadWorkspaceFile({
+                filename: file.name,
+                data_base64: base64
+              })
+              if (retryRes && retryRes.path) {
+                setCustomAvatarPath(retryRes.path)
+                return
+              }
+            }
+            throw firstErr
           }
         } catch (err: any) {
           setErrorMsg(`素材保存失败：${err.message || '无法写入工作区'}`)

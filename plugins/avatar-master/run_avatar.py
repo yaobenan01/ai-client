@@ -213,6 +213,22 @@ def main():
         print_progress(85, "正在进行音画流编码封装与微黑底白字字幕烧录...")
 
         if args.mode == "standalone":
+            target_res = (1920, 1080)
+            try:
+                import cv2
+                cap = cv2.VideoCapture(synced_avatar_video)
+                if cap.isOpened():
+                    vw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    vh = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    cap.release()
+                    if vh > vw:
+                        # 竖屏人像 (例如 720x1280 或 1080x1920)：严禁强行拉伸成 16:9 横屏
+                        target_res = (1080, 1920) if (vh >= 1200 or vw >= 720) else (vw, vh)
+                    else:
+                        target_res = (1920, 1080)
+            except Exception:
+                pass
+
             final_video = composite_standalone(
                 avatar_video_path=synced_avatar_video,
                 audio_path=master_audio,
@@ -220,7 +236,7 @@ def main():
                 srt_path=srt_file,
                 bg_preset_or_path=args.background,
                 chroma_key=args.chroma_key,
-                resolution=(1920, 1080)
+                resolution=target_res
             )
         else:
             # Mode: ppt_pip

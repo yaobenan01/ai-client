@@ -73,6 +73,13 @@ def get_mel_basis() -> np.ndarray:
     return _CACHED_MEL_BASIS
 
 
+def preemphasis(wav: np.ndarray, k: float = 0.97) -> np.ndarray:
+    """Wav2Lip 官方标准高频预加重滤波 y[t] = x[t] - k * x[t-1]。"""
+    if len(wav) == 0:
+        return wav
+    return np.append(wav[0], wav[1:] - k * wav[:-1])
+
+
 def stft_melspectrogram(
     y: np.ndarray,
     sr: int = 16000,
@@ -80,16 +87,27 @@ def stft_melspectrogram(
     hop_length: int = 200,
     win_length: int = 800,
     n_mels: int = 80,
+    ref_level_db: float = 20.0,
+    min_level_db: float = -100.0,
+    max_abs_value: float = 4.0,
 ) -> np.ndarray:
-    """计算短时傅里叶变换并投影到 80 维 Log-Mel 空间。
+    """计算短时傅里叶变换并投影到 Wav2Lip 官方标准对称归一化 [-4.0, +4.0] Mel 空间。
 
-    返回 shape: [80, T]
+    遵循 Wav2Lip / HeyGem 规范：
+    1. 预加重 preemphasis(0.97)
+    2. STFT 短时傅里叶变换 (win=800, hop=200, Hann window, reflect pad)
+    3. 80 维 Slaney Mel 滤波器组加权
+    4. 对数分贝缩放: S_db = 20 * log10(max(1e-5, Mel)) - ref_level_db
+    5. 对称归一化: np.clip(2 * max_abs * ((S - min_db) / (-min_db)) - max_abs, -max_abs, max_abs)
     """
     if y.ndim > 1:
         y = np.mean(y, axis=-1)
     y = y.astype(np.float32)
 
-    # 左右反射填充
+    # 1. 预加重高频补偿
+    y = preemphasis(y, 0.97)
+
+    # 2. 左右反射填充
     pad_len = n_fft // 2
     y_padded = np.pad(y, pad_len, mode="reflect")
 
@@ -109,26 +127,35 @@ def stft_melspectrogram(
     stft_res = np.fft.rfft(frames, n=n_fft, axis=-1)
     mag = np.abs(stft_res).T  # [num_bins, num_frames]
 
-    # Mel 投影
+    # 3. 80 维 Mel 投影
     basis = get_mel_basis()
     mel = np.dot(basis, mag)  # [n_mels, num_frames]
 
-    # 对数动态压缩与归一化
-    mel_db = np.log(np.clip(mel, a_min=1e-5, a_max=None))
-    return mel_db
+    # 4. 对数动态压缩转分贝
+    min_level = np.exp(min_level_db / 20.0 * np.log(10.0))  # 1e-5
+    s_db = 20.0 * np.log10(np.maximum(min_level, mel)) - ref_level_db
+
+    # 5. Wav2Lip 对称归一化至 [-4.0, +4.0]
+    norm_mel = np.clip(
+        (2.0 * max_abs_value) * ((s_db - min_level_db) / (-min_level_db)) - max_abs_value,
+        -max_abs_value,
+        max_abs_value,
+    ).astype(np.float32)
+
+    return norm_mel
 
 
 def extract_mel_chunks(
     audio_path: str | Path,
     fps: float = 25.0,
     mel_step_size: int = 16,
-    silence_thresh: float = 0.006,
+    silence_thresh: float = 0.001,
 ) -> tuple[list[np.ndarray], list[float], float]:
-    """从 16kHz WAV 音频中提取逐视频帧对齐的 Mel 频谱块与 RMS 能量。
+    """从 16kHz WAV 音频中提取逐视频帧精确时间居中对齐的 Mel 频谱块与 RMS 能量。
 
     返回:
     - mel_chunks: 每帧对应的 Mel 张量，shape 为 [1, 80, 16]
-    - rms_energies: 每帧对应的有效能量值（用于静音帧快速直通）
+    - rms_energies: 每帧对应的有效能量值
     - duration_sec: 音频总时长（秒）
     """
     import wave
@@ -147,7 +174,7 @@ def extract_mel_chunks(
     duration_sec = len(audio) / float(sr)
     total_video_frames = int(math.ceil(duration_sec * fps))
 
-    # 计算全局 Mel 频谱 (shape: [80, T_mel])
+    # 计算全局 80 维对称归一化 Mel 频谱 (shape: [80, T_mel])
     mel = stft_melspectrogram(audio, sr=sr)
     t_mels = mel.shape[1]
 
@@ -155,24 +182,24 @@ def extract_mel_chunks(
     rms_energies: list[float] = []
 
     samples_per_frame = int(sr / fps)
+    mel_idx_multiplier = 80.0 / fps
+    half_window = mel_step_size // 2
 
     for i in range(total_video_frames):
-        # 计算第 i 个视频帧对应的 Mel 起始时间步 (按 80Hz mel 帧率换算)
-        start_idx = int(round(i * (80.0 / fps)))
+        # 居中对齐当前视频帧：消除前后 100ms 声画不同步
+        center_idx = int(round(i * mel_idx_multiplier))
+        start_idx = center_idx - half_window
         end_idx = start_idx + mel_step_size
 
-        if end_idx <= t_mels:
-            chunk = mel[:, start_idx:end_idx]
-        else:
-            # 音频末尾补零/边缘镜像填充
-            chunk = np.zeros((80, mel_step_size), dtype=np.float32)
-            valid = mel[:, start_idx:t_mels]
-            valid_len = valid.shape[1]
-            if valid_len > 0:
-                chunk[:, :valid_len] = valid
-                chunk[:, valid_len:] = valid[:, -1:]
-            else:
-                chunk[:, :] = -11.51  # np.log(1e-5) 静音底噪值
+        chunk = np.full((80, mel_step_size), -4.0, dtype=np.float32)  # -4.0 为 Wav2Lip 静音值
+
+        # 切片有效部分并填充
+        valid_start = max(0, start_idx)
+        valid_end = min(t_mels, end_idx)
+        if valid_end > valid_start:
+            target_start = valid_start - start_idx
+            target_end = target_start + (valid_end - valid_start)
+            chunk[:, target_start:target_end] = mel[:, valid_start:valid_end]
 
         # 转换为 Wav2Lip 期望的标准输入格式: [1, 80, 16]
         mel_chunks.append(np.expand_dims(chunk, axis=0))

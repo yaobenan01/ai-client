@@ -19,22 +19,31 @@ import numpy as np
 
 
 def build_elliptical_feather_mask(h: int, w: int, cx: int | None = None, cy: int | None = None) -> np.ndarray:
-    """构建下半脸椭圆高斯羽化软遮罩 [H, W, 1]，边缘平滑衰减为 0。"""
+    """构建 HeyGem 级别下半脸解剖级高斯羽化软遮罩 [H, W, 1]，边缘柔和过渡为 0，中心 100% 锐利。"""
     try:
         import cv2
 
         mask = np.zeros((h, w), dtype=np.float32)
         center_x = cx if cx is not None else w // 2
-        center_y = cy if cy is not None else int(h * 0.73)
-        axes = (max(8, int(w * 0.30)), max(6, int(h * 0.20)))
-        cv2.ellipse(mask, (center_x, center_y), axes, 0, 0, 360, 1.0, -1)
-        ksize = max(15, (int(min(h, w) * 0.25) // 2) * 2 + 1)
-        sigma = max(3.0, ksize / 3.0)
-        mask = cv2.GaussianBlur(mask, (ksize, ksize), sigma)
-        return np.expand_dims(mask, axis=-1)
+        center_y = cy if cy is not None else int(h * 0.72)
+        rx = max(10, int(w * 0.30))
+        ry = max(8, int(h * 0.20))
+        cv2.ellipse(mask, (center_x, center_y), (rx, ry), 0, 0, 360, 1.0, -1)
+
+        # 向上限制：鼻底以上区域必须完全归零，保留 100% 原生眼睛和鼻梁
+        nose_limit = max(int(h * 0.48), center_y - int(ry * 0.85))
+        mask[:nose_limit, :] = 0.0
+
+        # 平滑高斯羽化过渡
+        ksize = max(11, (int(min(h, w) * 0.18) // 2) * 2 + 1)
+        sigma = max(2.5, ksize / 3.0)
+        feather = cv2.GaussianBlur(mask, (ksize, ksize), sigma)
+        if feather.max() > 0:
+            feather = np.clip(feather / 0.85, 0.0, 1.0)
+        return np.expand_dims(feather, axis=-1)
     except Exception:
         y, x = np.ogrid[:h, :w]
-        center_y = cy if cy is not None else h * 0.73
+        center_y = cy if cy is not None else h * 0.72
         center_x = cx if cx is not None else w * 0.5
         ry, rx = max(6.0, h * 0.20), max(8.0, w * 0.30)
         dist = ((y - center_y) / ry) ** 2 + ((x - center_x) / rx) ** 2
@@ -125,8 +134,8 @@ class OfflineLipsyncRenderer:
         rms_energies: list[float],
         out_pipe,
         batch_size: int = 16,
-        silence_thresh: float = 0.007,
-        alpha_ema: float = 0.70,
+        silence_thresh: float = 0.001,
+        alpha_ema: float = 0.88,
     ) -> None:
         """批量推理并直接写入 FFmpeg stdin 编码管道。
 
@@ -149,12 +158,11 @@ class OfflineLipsyncRenderer:
 
         prev_mouth_pred: dict[int, np.ndarray] = {}
 
-        # 批处理循环
+        # 批处理循环 (HeyGem 纯流式批量全帧推理，保障每一帧自然口型流转)
         for batch_start in range(0, n_total, batch_size):
             batch_end = min(n_total, batch_start + batch_size)
             batch_indices = list(range(batch_start, batch_end))
 
-            # 区分发声帧与静音帧
             infer_indices = []
             infer_faces = []
             infer_mels = []
@@ -164,11 +172,6 @@ class OfflineLipsyncRenderer:
                 base_i = get_base_idx(i)
                 frame = base_frames[base_i].copy()
                 box = face_boxes[base_i]
-                rms = rms_energies[i]
-
-                # 静音帧直接复用原底图，不启动神经网络推理
-                if rms < silence_thresh:
-                    continue
 
                 face_tensor, orig_crop, coords = self.prepare_face_crop(frame, box)
                 infer_indices.append(i)
@@ -211,7 +214,7 @@ class OfflineLipsyncRenderer:
                         except Exception:
                             pass
 
-                    # 帧间时域平滑 (EMA)，杜绝前后帧嘴唇高频微颤
+                    # 帧间时域平滑 (EMA: 0.88 保持唇形咬字开合利落，同时消除高频像素噪点)
                     if (original_i - 1) in prev_mouth_pred:
                         pred = (alpha_ema * pred + (1.0 - alpha_ema) * prev_mouth_pred[original_i - 1]).astype(np.uint8)
                     prev_mouth_pred[original_i] = pred
@@ -232,14 +235,28 @@ class OfflineLipsyncRenderer:
 
                     pred_resized = cv2.resize(pred_patch, (crop_w, crop_h))
 
-                    # 动态椭圆高斯羽化软遮罩（以真实嘴唇位置为中心，边缘自然渐变融入原生皮肤）
+                    # HeyGem 级原生肤色/光影自适应直方图匹配 (Color Matching)
+                    # 利用原面部上半区 (y < 45%) 的重合皮肤统计特征，动态校准预测嘴周色彩与亮度增益
+                    half_ref_h = max(4, int(crop_h * 0.45))
+                    orig_top = orig_crop[:half_ref_h, :].astype(np.float32)
+                    pred_top = pred_resized[:half_ref_h, :].astype(np.float32)
+                    mu_orig = np.mean(orig_top, axis=(0, 1), keepdims=True)
+                    std_orig = np.std(orig_top, axis=(0, 1), keepdims=True)
+                    mu_pred = np.mean(pred_top, axis=(0, 1), keepdims=True)
+                    std_pred = np.std(pred_top, axis=(0, 1), keepdims=True)
+
+                    gain = (std_orig + 1e-4) / (std_pred + 1e-4)
+                    bias = mu_orig - gain * mu_pred
+                    pred_color = np.clip(pred_resized.astype(np.float32) * gain + bias, 0.0, 255.0).astype(np.uint8)
+
+                    # HeyGem 级别下半脸解剖级高斯羽化软遮罩
                     mcx_rel = (mcx - xmin) if mcx is not None else (crop_w // 2)
-                    mcy_rel = (mcy - ymin) if mcy is not None else int(crop_h * 0.74)
+                    mcy_rel = (mcy - ymin) if mcy is not None else int(crop_h * 0.72)
                     mask_feather = build_elliptical_feather_mask(crop_h, crop_w, cx=mcx_rel, cy=mcy_rel)
 
                     # 仅在羽化遮罩区域与原人脸进行软加权混合
                     orig_target = out_frame[ymin:ymax, xmin:xmax].astype(np.float32)
-                    blended = (pred_resized.astype(np.float32) * mask_feather + orig_target * (1.0 - mask_feather)).astype(np.uint8)
+                    blended = (pred_color.astype(np.float32) * mask_feather + orig_target * (1.0 - mask_feather)).astype(np.uint8)
                     out_frame[ymin:ymax, xmin:xmax] = blended
 
                 # 将最终 BGR 图像帧写入 FFmpeg 管道
@@ -267,13 +284,16 @@ def ensure_preset_assets(preset_dir_path: str, avatar_id: str) -> str:
 
     # 需要创建或生成帧：先探测原路径是否可写（防止 C:\Program Files 等安装目录只读报错）
     is_writable = False
-    try:
-        source_dir.mkdir(parents=True, exist_ok=True)
-        test_file = source_dir / ".write_probe"
-        test_file.touch()
-        test_file.unlink()
-        is_writable = True
-    except (PermissionError, OSError):
+    source_str = str(source_dir).lower()
+    if "program files" not in source_str and "windows" not in source_str:
+        try:
+            source_dir.mkdir(parents=True, exist_ok=True)
+            test_file = source_dir / ".write_probe"
+            test_file.touch()
+            test_file.unlink()
+            is_writable = True
+        except (PermissionError, OSError):
+            is_writable = False
         is_writable = False
 
     target_dir = source_dir if is_writable else (Path(tempfile.gettempdir()) / "ai_client_avatar" / "presets" / avatar_id).resolve()
